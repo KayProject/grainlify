@@ -11,6 +11,9 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
     String, Symbol, Vec,
 };
+
+#[cfg(test)]
+use soroban_sdk::testutils::Address as _;
 pub mod asset;
 mod governance;
 pub mod nonce;
