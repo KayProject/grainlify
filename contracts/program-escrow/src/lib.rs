@@ -649,6 +649,8 @@ pub struct ProgramAggregateStats {
     pub released_count: u32,
 }
 
+use grainlify_core::errors;
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LockItem {
@@ -678,21 +680,20 @@ pub struct BatchFundsReleased {
     pub total_amount: i128,
     pub timestamp: u64,
 }
-
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum BatchError {
-    InvalidBatchSize = 1,
-    ProgramAlreadyExists = 2,
-    DuplicateProgramId = 3,
-    ProgramNotFound = 4,
-    InvalidAmount = 5,
-    ScheduleNotFound = 6,
-    AlreadyReleased = 7,
-    Unauthorized = 8,
-    FundsPaused = 9,
-    DuplicateScheduleId = 10,
+    InvalidBatchSizeProgram = 403,
+    ProgramAlreadyExists = 401,
+    DuplicateProgramId = 402,
+    ProgramNotFound = 404,
+    InvalidAmount = 4,
+    ScheduleNotFound = 405,
+    AlreadyReleased = 406,
+    Unauthorized = 3,
+    FundsPaused = 407,
+    DuplicateScheduleId = 408,
 }
 
 pub const MAX_BATCH_SIZE: u32 = 100;
@@ -1135,7 +1136,7 @@ impl ProgramEscrowContract {
     ) -> Result<u32, BatchError> {
         let batch_size = items.len() as u32;
         if batch_size == 0 || batch_size > MAX_BATCH_SIZE {
-            return Err(BatchError::InvalidBatchSize);
+            return Err(BatchError::InvalidBatchSizeProgram);
         }
         for i in 0..batch_size {
             for j in (i + 1)..batch_size {
@@ -1165,7 +1166,7 @@ impl ProgramEscrowContract {
             let token_address = item.token_address.clone();
 
             if program_id.is_empty() {
-                return Err(BatchError::InvalidBatchSize);
+                return Err(BatchError::InvalidBatchSizeProgram);
             }
 
             let program_data = ProgramData {

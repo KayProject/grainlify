@@ -11,29 +11,30 @@ pub use identity::*;
 
 mod reentrancy_guard;
 
+use grainlify_core::errors;
 #[contracterror]
 #[derive(Clone, Debug, PartialEq)]
 #[repr(u32)]
 pub enum Error {
-    NotInitialized = 1,
-    AlreadyInitialized = 2,
-    BountyExists = 3,
-    BountyNotFound = 4,
-    FundsNotLocked = 5,
+    NotInitialized = 2,
+    AlreadyInitialized = 1,
+    BountyExists = 201,
+    BountyNotFound = 202,
+    FundsNotLocked = 203,
     DeadlineNotPassed = 6,
-    Unauthorized = 7,
-    InsufficientBalance = 8,
-    InvalidLabel = 9,
-    TooManyLabels = 10,
-    LabelNotAllowed = 11,
+    Unauthorized = 3,
+    InsufficientFunds = 5,
+    InvalidLabel = 226,
+    TooManyLabels = 227,
+    LabelNotAllowed = 228,
     // Identity-related errors
-    InvalidSignature = 100,
-    ClaimExpired = 101,
-    UnauthorizedIssuer = 102,
-    InvalidClaimFormat = 103,
-    TransactionExceedsLimit = 104,
-    InvalidRiskScore = 105,
-    InvalidTier = 106,
+    InvalidSignature = 301,
+    ClaimExpired = 302,
+    UnauthorizedIssuer = 303,
+    InvalidClaimFormat = 304,
+    TransactionExceedsLimit = 305,
+    InvalidRiskScore = 306,
+    InvalidTier = 307,
 }
 
 #[contracttype]
@@ -476,7 +477,7 @@ impl EscrowContract {
             return Err(Error::NotInitialized);
         }
         if amount <= 0 {
-            return Err(Error::InsufficientBalance);
+            return Err(Error::InsufficientFunds);
         }
         if env.storage().persistent().has(&DataKey::Escrow(bounty_id)) {
             return Err(Error::BountyExists);
@@ -597,7 +598,7 @@ impl EscrowContract {
             return Err(Error::FundsNotLocked);
         }
         if escrow.remaining_amount <= 0 {
-            return Err(Error::InsufficientBalance);
+            return Err(Error::InsufficientFunds);
         }
 
         // Enforce transaction limit for contributor
@@ -652,7 +653,7 @@ impl EscrowContract {
             return Err(Error::DeadlineNotPassed);
         }
         if escrow.remaining_amount <= 0 {
-            return Err(Error::InsufficientBalance);
+            return Err(Error::InsufficientFunds);
         }
 
         // EFFECTS: update state before external call (CEI)
