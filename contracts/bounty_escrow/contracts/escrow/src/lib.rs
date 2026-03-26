@@ -29,6 +29,10 @@ declare_id!("8vS5pL7e6k2xP7L9R9jGv6D5v8S5pL7e6k2xP7L9R9jG");
 mod test_frozen_balance;
 #[cfg(test)]
 mod test_reentrancy_guard;
+#[cfg(test)]
+mod test_sandbox;
+#[cfg(test)]
+mod test_gas;
 
 use events::{
     emit_batch_funds_locked, emit_batch_funds_released, emit_bounty_initialized,
