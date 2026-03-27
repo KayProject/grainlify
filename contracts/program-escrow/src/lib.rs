@@ -186,9 +186,8 @@ pub const RISK_FLAG_DEPRECATED: u32 = 1 << 3;
 pub const DELEGATE_PERMISSION_RELEASE: u32 = 1 << 0;
 pub const DELEGATE_PERMISSION_REFUND: u32 = 1 << 1;
 pub const DELEGATE_PERMISSION_UPDATE_META: u32 = 1 << 2;
-pub const DELEGATE_PERMISSION_MASK: u32 = DELEGATE_PERMISSION_RELEASE
-    | DELEGATE_PERMISSION_REFUND
-    | DELEGATE_PERMISSION_UPDATE_META;
+pub const DELEGATE_PERMISSION_MASK: u32 =
+    DELEGATE_PERMISSION_RELEASE | DELEGATE_PERMISSION_REFUND | DELEGATE_PERMISSION_UPDATE_META;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -297,8 +296,8 @@ mod monitoring {
 
 // ==================== TWA METRICS MODULE ====================
 pub mod twa_metrics {
-    use soroban_sdk::{Env};
     use crate::{DataKey, TimeWeightedMetrics, TwaBucket};
+    use soroban_sdk::Env;
 
     const TWA_PERIOD_SECS: u64 = 3600;
     const NUM_BUCKETS: u64 = 24;
@@ -313,7 +312,9 @@ pub mod twa_metrics {
 
     pub fn track_lock(env: &Env, amount: i128) {
         let timestamp = env.ledger().timestamp();
-        env.storage().persistent().set(&DataKey::TwaLastLock, &timestamp);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TwaLastLock, &timestamp);
 
         let period_id = get_period_id(timestamp);
         let index = get_bucket_index(timestamp);
@@ -347,7 +348,11 @@ pub mod twa_metrics {
         let timestamp = env.ledger().timestamp();
         let last_lock_opt: Option<u64> = env.storage().persistent().get(&DataKey::TwaLastLock);
         if let Some(last_lock) = last_lock_opt {
-            let settlement_time = if timestamp > last_lock { timestamp - last_lock } else { 0 };
+            let settlement_time = if timestamp > last_lock {
+                timestamp - last_lock
+            } else {
+                0
+            };
             let total_settlement_time = settlement_time * count;
 
             let period_id = get_period_id(timestamp);
@@ -388,7 +393,9 @@ pub mod twa_metrics {
         for i in 0..NUM_BUCKETS {
             let key = DataKey::TwaBucket(i);
             if let Some(bucket) = env.storage().persistent().get::<_, TwaBucket>(&key) {
-                if current_period >= bucket.period_id && current_period - bucket.period_id < NUM_BUCKETS {
+                if current_period >= bucket.period_id
+                    && current_period - bucket.period_id < NUM_BUCKETS
+                {
                     total_lock_amount += bucket.sum_lock_amount;
                     total_lock_count += bucket.lock_count;
                     total_settlement_time += bucket.sum_settlement_time;
@@ -1708,7 +1715,7 @@ impl ProgramEscrowContract {
     }
 
     /// Returns the current admin address, if set.
-    pub fn get_admin(env: Env) -> Option<Address> {
+    pub fn get_program_admin(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Admin)
     }
 
@@ -3499,7 +3506,8 @@ impl ProgramEscrowContract {
         Self::release_program_schedule_manual_internal(env, None, schedule_id)
     }
 
-    pub fn release_prog_schedule_manual_by(env: Env, caller: Address, schedule_id: u64) {      Self::release_program_schedule_manual_internal(env, Some(caller), schedule_id)
+    pub fn release_prog_schedule_manual_by(env: Env, caller: Address, schedule_id: u64) {
+        Self::release_program_schedule_manual_internal(env, Some(caller), schedule_id)
     }
 
     fn release_program_schedule_manual_internal(
@@ -3921,9 +3929,9 @@ impl ProgramEscrowContract {
 #[cfg(test)]
 mod test;
 #[cfg(test)]
-mod test_time_weighted_metrics;
-#[cfg(test)]
 mod test_pause;
+#[cfg(test)]
+mod test_time_weighted_metrics;
 
 #[cfg(test)]
 #[cfg(any())]

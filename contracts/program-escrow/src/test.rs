@@ -678,10 +678,10 @@ fn test_admin_rotation() {
     env.mock_all_auths();
 
     client.set_admin(&admin);
-    assert_eq!(client.get_admin(), Some(admin.clone()));
+    assert_eq!(client.get_program_admin(), Some(admin.clone()));
 
     client.set_admin(&new_admin);
-    assert_eq!(client.get_admin(), Some(new_admin));
+    assert_eq!(client.get_program_admin(), Some(new_admin));
 }
 
 /// After admin rotation, new admin can update rate limit config.
