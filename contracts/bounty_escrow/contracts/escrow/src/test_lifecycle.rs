@@ -90,10 +90,20 @@ fn lock(ctx: &Ctx, bounty_id: u64, amount: i128) {
 }
 
 /// Returns true if any event in `events` has the given topic symbol.
-fn has_topic(_env: &Env, events: &soroban_sdk::Vec<(soroban_sdk::Address, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val)>, topic: Symbol) -> bool {
+fn has_topic(
+    _env: &Env,
+    events: &soroban_sdk::Vec<(
+        soroban_sdk::Address,
+        soroban_sdk::Vec<soroban_sdk::Val>,
+        soroban_sdk::Val,
+    )>,
+    topic: Symbol,
+) -> bool {
     for (_contract, topics, _data) in events.iter() {
         for t in topics.iter() {
-            if let Ok(s) = <Symbol as soroban_sdk::TryFromVal<Env, soroban_sdk::Val>>::try_from_val(_env, &t) {
+            if let Ok(s) =
+                <Symbol as soroban_sdk::TryFromVal<Env, soroban_sdk::Val>>::try_from_val(_env, &t)
+            {
                 if s == topic {
                     return true;
                 }
@@ -104,10 +114,20 @@ fn has_topic(_env: &Env, events: &soroban_sdk::Vec<(soroban_sdk::Address, soroba
 }
 
 /// Find the data payload of the first event that has the given topic symbol.
-fn find_data(_env: &Env, events: &soroban_sdk::Vec<(soroban_sdk::Address, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val)>, topic: Symbol) -> Option<soroban_sdk::Val> {
+fn find_data(
+    _env: &Env,
+    events: &soroban_sdk::Vec<(
+        soroban_sdk::Address,
+        soroban_sdk::Vec<soroban_sdk::Val>,
+        soroban_sdk::Val,
+    )>,
+    topic: Symbol,
+) -> Option<soroban_sdk::Val> {
     for (_contract, topics, data) in events.iter() {
         for t in topics.iter() {
-            if let Ok(s) = <Symbol as soroban_sdk::TryFromVal<Env, soroban_sdk::Val>>::try_from_val(_env, &t) {
+            if let Ok(s) =
+                <Symbol as soroban_sdk::TryFromVal<Env, soroban_sdk::Val>>::try_from_val(_env, &t)
+            {
                 if s == topic {
                     return Some(data);
                 }

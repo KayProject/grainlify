@@ -725,7 +725,10 @@ mod cross_contract_interface_tests {
         let deadline = env.ledger().timestamp() + 3_600;
         let result = client.try_lock_funds(&attacker, &1, &1_000, &deadline);
         // Attacker has no tokens, so the transfer should fail.
-        assert!(result.is_err(), "lock_funds must fail when caller has no tokens");
+        assert!(
+            result.is_err(),
+            "lock_funds must fail when caller has no tokens"
+        );
     }
 
     /// partial_release must require admin authorisation.
@@ -775,7 +778,9 @@ mod cross_contract_interface_tests {
         client.init(&admin, &token.address);
 
         let uncapped = gas_budget::OperationBudget::uncapped();
-        client.set_gas_budget(&uncapped, &uncapped, &uncapped, &uncapped, &uncapped, &uncapped, &false);
+        client.set_gas_budget(
+            &uncapped, &uncapped, &uncapped, &uncapped, &uncapped, &uncapped, &false,
+        );
 
         let auths = env.auths();
         let admin_auth = auths.iter().find(|(addr, _)| addr == &admin);

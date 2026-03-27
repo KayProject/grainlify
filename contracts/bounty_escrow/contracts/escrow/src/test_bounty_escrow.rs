@@ -511,7 +511,6 @@ fn test_gas_proxy_event_footprint_per_operation_is_constant() {
     assert!(after_release >= before_release);
 }
 
-
 #[test]
 fn test_emergency_withdraw() {
     let (env, client, _contract_id) = create_test_env();

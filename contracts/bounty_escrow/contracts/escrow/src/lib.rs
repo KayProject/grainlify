@@ -18,20 +18,20 @@ mod reentrancy_guard;
 #[cfg(test)]
 mod test_metadata;
 
+pub mod gas_budget;
 #[cfg(test)]
 mod test_boundary_edge_cases;
 mod test_cross_contract_interface;
 #[cfg(test)]
 mod test_deterministic_randomness;
 #[cfg(test)]
-mod test_multi_token_fees;
-#[cfg(test)]
 mod test_multi_region_treasury;
+#[cfg(test)]
+mod test_multi_token_fees;
 #[cfg(test)]
 mod test_rbac;
 #[cfg(test)]
 mod test_risk_flags;
-pub mod gas_budget;
 mod traits;
 pub mod upgrade_safety;
 
@@ -1222,12 +1222,7 @@ impl BountyEscrowContract {
 
     /// Test-only: combined percentage + fixed fee (capped).
     #[cfg(test)]
-    pub fn combined_fee_pub(
-        amount: i128,
-        rate_bps: i128,
-        fixed: i128,
-        fee_enabled: bool,
-    ) -> i128 {
+    pub fn combined_fee_pub(amount: i128, rate_bps: i128, fixed: i128, fee_enabled: bool) -> i128 {
         Self::combined_fee_amount(amount, rate_bps, fixed, fee_enabled)
     }
 
@@ -1347,7 +1342,11 @@ impl BountyEscrowContract {
                 continue;
             }
 
-            client.transfer(&env.current_contract_address(), &destination.address, &share);
+            client.transfer(
+                &env.current_contract_address(),
+                &destination.address,
+                &share,
+            );
             events::emit_fee_collected(
                 env,
                 events::FeeCollected {
@@ -1433,7 +1432,6 @@ impl BountyEscrowContract {
                 timestamp: env.ledger().timestamp(),
             },
         );
-
 
         Ok(())
     }
@@ -2042,7 +2040,8 @@ impl BountyEscrowContract {
 
         events::emit_capability_used(
             env,
-            events::CapabilityUsed { capability_id: capability_id.clone(),
+            events::CapabilityUsed {
+                capability_id: capability_id.clone(),
                 holder: holder.clone(),
                 action: capability.action.clone(),
                 bounty_id,
@@ -2100,7 +2099,8 @@ impl BountyEscrowContract {
 
         events::emit_capability_issued(
             &env,
-            events::CapabilityIssued { capability_id: capability_id.clone(),
+            events::CapabilityIssued {
+                capability_id: capability_id.clone(),
                 owner,
                 holder,
                 action,
@@ -2115,7 +2115,11 @@ impl BountyEscrowContract {
         Ok(capability_id)
     }
 
-    pub fn revoke_capability(env: Env, owner: Address, capability_id: BytesN<32>) -> Result<(), Error> {
+    pub fn revoke_capability(
+        env: Env,
+        owner: Address,
+        capability_id: BytesN<32>,
+    ) -> Result<(), Error> {
         let mut capability = Self::load_capability(&env, capability_id.clone())?;
         if capability.owner != owner {
             return Err(Error::Unauthorized);
@@ -2133,7 +2137,8 @@ impl BountyEscrowContract {
 
         events::emit_capability_revoked(
             &env,
-            events::CapabilityRevoked { capability_id: capability_id.clone(),
+            events::CapabilityRevoked {
+                capability_id: capability_id.clone(),
                 owner,
                 revoked_at: env.ledger().timestamp(),
             },
@@ -2463,16 +2468,18 @@ impl BountyEscrowContract {
         soroban_sdk::log!(&env, "transfer ok");
 
         // Resolve effective fee config (per-token takes precedence over global).
-        let (lock_fee_rate, _release_fee_rate, lock_fixed_fee, _release_fixed, fee_recipient, fee_enabled) =
-            Self::resolve_fee_config(&env);
+        let (
+            lock_fee_rate,
+            _release_fee_rate,
+            lock_fixed_fee,
+            _release_fixed,
+            fee_recipient,
+            fee_enabled,
+        ) = Self::resolve_fee_config(&env);
 
         // Deduct lock fee from the escrowed principal (percentage + fixed, capped at deposit).
-        let fee_amount = Self::combined_fee_amount(
-            amount,
-            lock_fee_rate,
-            lock_fixed_fee,
-            fee_enabled,
-        );
+        let fee_amount =
+            Self::combined_fee_amount(amount, lock_fee_rate, lock_fixed_fee, fee_enabled);
 
         // Net amount stored in escrow after fee.
         // Fee must never exceed the deposit; guard against misconfiguration.
@@ -2737,8 +2744,14 @@ impl BountyEscrowContract {
             return Err(Error::InsufficientFunds);
         }
         // 8. Fee computation (pure)
-        let (lock_fee_rate, _release_fee_rate, lock_fixed_fee, _release_fixed, _fee_recipient, fee_enabled) =
-            Self::resolve_fee_config(env);
+        let (
+            lock_fee_rate,
+            _release_fee_rate,
+            lock_fixed_fee,
+            _release_fixed,
+            _fee_recipient,
+            fee_enabled,
+        ) = Self::resolve_fee_config(env);
         let fee_amount =
             Self::combined_fee_amount(amount, lock_fee_rate, lock_fixed_fee, fee_enabled);
         let net_amount = amount.checked_sub(fee_amount).unwrap_or(amount);
@@ -2939,8 +2952,14 @@ impl BountyEscrowContract {
         }
 
         // Resolve effective fee config for release.
-        let (_lock_fee_rate, release_fee_rate, _lock_fixed, release_fixed_fee, fee_recipient, fee_enabled) =
-            Self::resolve_fee_config(&env);
+        let (
+            _lock_fee_rate,
+            release_fee_rate,
+            _lock_fixed,
+            release_fixed_fee,
+            fee_recipient,
+            fee_enabled,
+        ) = Self::resolve_fee_config(&env);
 
         let release_fee = Self::combined_fee_amount(
             escrow.amount,
@@ -3078,8 +3097,14 @@ impl BountyEscrowContract {
         if escrow.status != EscrowStatus::Locked {
             return Err(Error::FundsNotLocked);
         }
-        let (_lock_fee_rate, release_fee_rate, _lock_fixed, release_fixed_fee, _fee_recipient, fee_enabled) =
-            Self::resolve_fee_config(env);
+        let (
+            _lock_fee_rate,
+            release_fee_rate,
+            _lock_fixed,
+            release_fixed_fee,
+            _fee_recipient,
+            fee_enabled,
+        ) = Self::resolve_fee_config(env);
         let release_fee = Self::combined_fee_amount(
             escrow.amount,
             release_fee_rate,
@@ -3767,7 +3792,7 @@ impl BountyEscrowContract {
                 amount: refund_amount,
                 refund_to: refund_to.clone(),
                 timestamp: now,
-                trigger_type: events::RefundTriggerType::AdminApproval
+                trigger_type: events::RefundTriggerType::AdminApproval,
             },
         );
         Self::record_receipt(
@@ -3799,7 +3824,12 @@ impl BountyEscrowContract {
 
         // GUARD: release reentrancy lock
         reentrancy_guard::release(&env);
-        monitoring::track_operation(&env, symbol_short!("refund"), escrow.depositor.clone(), true);
+        monitoring::track_operation(
+            &env,
+            symbol_short!("refund"),
+            escrow.depositor.clone(),
+            true,
+        );
         Ok(())
     }
 
@@ -4032,7 +4062,7 @@ impl BountyEscrowContract {
                 amount: refund_amount,
                 refund_to: refund_to.clone(),
                 timestamp: now,
-                trigger_type: events::RefundTriggerType::AdminApproval
+                trigger_type: events::RefundTriggerType::AdminApproval,
             },
         );
 
@@ -4140,7 +4170,7 @@ impl BountyEscrowContract {
                 amount,
                 refund_to,
                 timestamp: now,
-                trigger_type: events::RefundTriggerType::AdminApproval
+                trigger_type: events::RefundTriggerType::AdminApproval,
             },
         );
 

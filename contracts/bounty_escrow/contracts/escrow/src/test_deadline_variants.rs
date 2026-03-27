@@ -106,7 +106,6 @@ impl<'a> Setup<'a> {
     }
 }
 
-
 #[test]
 fn test_future_deadline_refund_blocked_before_expiry() {
     let s = Setup::new();
@@ -168,7 +167,6 @@ fn test_future_deadline_release_unaffected_by_deadline() {
     assert_eq!(info.status, EscrowStatus::Released);
     assert_eq!(s.token.balance(&s.contributor), 3_000);
 }
-
 
 #[test]
 fn test_no_deadline_refund_blocked_without_approval() {
@@ -240,5 +238,3 @@ fn test_no_deadline_release_succeeds() {
     assert_eq!(s.token.balance(&s.contributor), 2_500);
     assert_eq!(s.token.balance(&s.escrow.address), 0);
 }
-
-
