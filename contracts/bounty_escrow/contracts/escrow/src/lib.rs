@@ -7,6 +7,8 @@ mod test_cross_contract_interface;
 #[cfg(test)]
 mod test_deterministic_randomness;
 #[cfg(test)]
+mod test_draft_state;
+#[cfg(test)]
 mod test_multi_region_treasury;
 #[cfg(test)]
 mod test_multi_token_fees;
@@ -14,15 +16,13 @@ mod test_multi_token_fees;
 mod test_rbac;
 #[cfg(test)]
 mod test_risk_flags;
-#[cfg(test)]
-mod test_draft_state;
 mod traits;
 pub mod upgrade_safety;
 
 mod events;
-mod reentrancy_guard;
 mod invariants;
 mod multitoken_invariants;
+mod reentrancy_guard;
 
 #[cfg(test)]
 mod test_frozen_balance;
@@ -31,19 +31,19 @@ mod test_reentrancy_guard;
 
 use events::{
     emit_batch_funds_locked, emit_batch_funds_released, emit_bounty_initialized,
-    emit_deprecation_state_changed, emit_deterministic_selection, emit_escrow_published, emit_funds_locked,
-    emit_funds_locked_anon, emit_funds_refunded, emit_funds_released,
+    emit_deprecation_state_changed, emit_deterministic_selection, emit_escrow_published,
+    emit_funds_locked, emit_funds_locked_anon, emit_funds_refunded, emit_funds_released,
     emit_maintenance_mode_changed, emit_notification_preferences_updated,
     emit_participant_filter_mode_changed, emit_risk_flags_updated, emit_ticket_claimed,
     emit_ticket_issued, BatchFundsLocked, BatchFundsReleased, BountyEscrowInitialized,
     ClaimCancelled, ClaimCreated, ClaimExecuted, CriticalOperationOutcome, DeprecationStateChanged,
-    DeterministicSelectionDerived, EscrowPublished, FundsLocked, FundsLockedAnon, FundsRefunded, FundsReleased,
-    MaintenanceModeChanged, NotificationPreferencesUpdated, ParticipantFilterModeChanged,
-    RiskFlagsUpdated, TicketClaimed, TicketIssued, EVENT_VERSION_V2,
+    DeterministicSelectionDerived, EscrowPublished, FundsLocked, FundsLockedAnon, FundsRefunded,
+    FundsReleased, MaintenanceModeChanged, NotificationPreferencesUpdated,
+    ParticipantFilterModeChanged, RiskFlagsUpdated, TicketClaimed, TicketIssued, EVENT_VERSION_V2,
 };
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address,
-    BytesN, Env, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, BytesN,
+    Env, String, Symbol, Vec,
 };
 
 // ============================================================================
@@ -2280,7 +2280,11 @@ impl BountyEscrowContract {
         Ok(capability_id.clone())
     }
 
-    pub fn revoke_capability(env: Env, owner: Address, capability_id: BytesN<32>) -> Result<(), Error> {
+    pub fn revoke_capability(
+        env: Env,
+        owner: Address,
+        capability_id: BytesN<32>,
+    ) -> Result<(), Error> {
         let mut capability = Self::load_capability(&env, capability_id.clone())?;
         if capability.owner != owner {
             return Err(Error::Unauthorized);
@@ -3161,7 +3165,8 @@ impl BountyEscrowContract {
             reentrancy_guard::release(&env);
             return Err(Error::InvalidState);
         }
-        if escrow.status != EscrowStatus::Locked && escrow.status != EscrowStatus::PartiallyRefunded {
+        if escrow.status != EscrowStatus::Locked && escrow.status != EscrowStatus::PartiallyRefunded
+        {
             reentrancy_guard::release(&env);
             return Err(Error::FundsNotLocked);
         }
@@ -4353,7 +4358,7 @@ impl BountyEscrowContract {
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         let client = token::Client::new(&env, &token_addr);
         let contract_address = env.current_contract_address();
-        
+
         client.transfer(&contract_address, &refund_to, &amount);
 
         // Emit event
@@ -4794,10 +4799,10 @@ impl BountyEscrowContract {
 
         // Release reentrancy guard
         reentrancy_guard::release(&env);
-        
+
         #[cfg(any(test, feature = "testutils"))]
         gas_budget::check(&env, &gas_snapshot);
-        
+
         result
     }
 }

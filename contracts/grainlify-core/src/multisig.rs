@@ -152,7 +152,10 @@ impl MultiSig {
     }
 
     pub fn is_contract_paused(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     pub fn pause(env: &Env, signer: Address) {

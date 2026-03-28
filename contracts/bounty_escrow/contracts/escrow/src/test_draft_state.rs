@@ -5,7 +5,6 @@
 /// This module tests the draft state functionality where escrows
 /// are created in Draft status and must be explicitly published
 /// before funds can be released or refunded.
-
 use crate::test::setup_test_environment;
 use soroban_sdk::{Address, Env};
 
@@ -14,8 +13,9 @@ fn test_escrow_starts_in_draft_status() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _contract_id, admin, depositor, token_id, _token_admin) = setup_test_environment(&env);
-    
+    let (client, _contract_id, admin, depositor, token_id, _token_admin) =
+        setup_test_environment(&env);
+
     let bounty_id = 1u64;
     let amount = 1000i128;
     let deadline = env.ledger().timestamp() + 1000;
@@ -34,8 +34,9 @@ fn test_release_fails_in_draft_status() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) = setup_test_environment(&env);
-    
+    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) =
+        setup_test_environment(&env);
+
     let bounty_id = 2u64;
     let amount = 1000i128;
     let deadline = env.ledger().timestamp() + 1000;
@@ -54,8 +55,9 @@ fn test_refund_fails_in_draft_status() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) = setup_test_environment(&env);
-    
+    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) =
+        setup_test_environment(&env);
+
     let bounty_id = 3u64;
     let amount = 1000i128;
     let deadline = env.ledger().timestamp() + 1000;
@@ -75,15 +77,16 @@ fn test_publish_transitions_to_locked() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) = setup_test_environment(&env);
-    
+    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) =
+        setup_test_environment(&env);
+
     let bounty_id = 4u64;
     let amount = 1000i128;
     let deadline = env.ledger().timestamp() + 1000;
 
     // Lock funds - creates Draft escrow
     client.lock_funds(&depositor, &bounty_id, &amount, &deadline);
-    
+
     // Verify initial Draft status
     let info = client.get_escrow_info(&bounty_id);
     assert_eq!(info.status as u32, 0); // Draft
@@ -101,8 +104,9 @@ fn test_release_succeeds_after_publish() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) = setup_test_environment(&env);
-    
+    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) =
+        setup_test_environment(&env);
+
     let bounty_id = 5u64;
     let amount = 1000i128;
     let deadline = env.ledger().timestamp() + 1000;
@@ -127,8 +131,9 @@ fn test_refund_succeeds_after_publish() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) = setup_test_environment(&env);
-    
+    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) =
+        setup_test_environment(&env);
+
     let bounty_id = 6u64;
     let amount = 1000i128;
     let deadline = env.ledger().timestamp() + 1000;
@@ -156,8 +161,9 @@ fn test_publish_fails_if_already_locked() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) = setup_test_environment(&env);
-    
+    let (client, _contract_id, _admin, depositor, _token_id, _token_admin) =
+        setup_test_environment(&env);
+
     let bounty_id = 7u64;
     let amount = 1000i128;
     let deadline = env.ledger().timestamp() + 1000;
@@ -178,8 +184,9 @@ fn test_publish_fails_for_nonexistent_bounty() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _contract_id, _admin, _depositor, _token_id, _token_admin) = setup_test_environment(&env);
-    
+    let (client, _contract_id, _admin, _depositor, _token_id, _token_admin) =
+        setup_test_environment(&env);
+
     let nonexistent_bounty_id = 999u64;
 
     // Try to publish non-existent bounty - should fail
