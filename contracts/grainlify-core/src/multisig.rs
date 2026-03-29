@@ -14,6 +14,7 @@ enum DataKey {
     Proposal(u64),
     ProposalCounter,
     Paused,
+    StateInconsistent,
 }
 
 /// =======================
@@ -173,26 +174,22 @@ impl MultiSig {
             .publish((symbol_short!("executed"),), proposal_id);
     }
 
-    /// Pauses multisig-governed execution paths.
-    pub fn pause(env: &Env, signer: Address) {
-        signer.require_auth();
-
-        let config = Self::get_config(env);
-        Self::assert_signer(&config, &signer);
-
-        env.storage().instance().set(&DataKey::Paused, &true);
-        env.events().publish((symbol_short!("paused"),), signer);
+    /// Returns the current multisig configuration, if initialized.
+    pub fn get_config_opt(env: &Env) -> Option<MultiSigConfig> {
+        env.storage().instance().get(&DataKey::Config)
     }
 
-    /// Unpause multisig-governed execution paths.
-    pub fn unpause(env: &Env, signer: Address) {
-        signer.require_auth();
+    /// Sets the multisig configuration directly for controlled restore flows.
+    pub fn set_config(env: &Env, config: MultiSigConfig) {
+        if config.threshold == 0 || config.threshold > config.signers.len() as u32 {
+            panic!("{:?}", MultiSigError::InvalidThreshold);
+        }
+        env.storage().instance().set(&DataKey::Config, &config);
+    }
 
-        let config = Self::get_config(env);
-        Self::assert_signer(&config, &signer);
-
-        env.storage().instance().set(&DataKey::Paused, &false);
-        env.events().publish((symbol_short!("unpause"),), signer);
+    /// Clears the multisig configuration for controlled restore flows.
+    pub fn clear_config(env: &Env) {
+        env.storage().instance().remove(&DataKey::Config);
     }
 
     /// Return whether the contract is currently paused.
@@ -203,21 +200,29 @@ impl MultiSig {
             .unwrap_or(false)
     }
 
-    /// Return whether the multisig configuration is structurally unsafe.
+    /// Return whether the contract state is inconsistent.
     pub fn is_state_inconsistent(env: &Env) -> bool {
-        match Self::get_config_opt(env) {
-            Some(config) => {
-                config.threshold == 0
-                    || config.signers.is_empty()
-                    || config.threshold > config.signers.len()
-            }
-            None => true,
-        }
+        // Check for basic state consistency
+        env.storage()
+            .instance()
+            .get(&DataKey::StateInconsistent)
+            .unwrap_or(false)
     }
 
-    /// Returns the current multisig configuration, if initialized.
-    pub fn get_config_opt(env: &Env) -> Option<MultiSigConfig> {
-        env.storage().instance().get(&DataKey::Config)
+    /// Pause the contract (requires multisig)
+    pub fn pause(env: &Env, signer: Address) {
+        let config = Self::get_config(env);
+        Self::assert_signer(&config, &signer);
+        signer.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &true);
+    }
+
+    /// Unpause the contract (requires multisig)
+    pub fn unpause(env: &Env, signer: Address) {
+        let config = Self::get_config(env);
+        Self::assert_signer(&config, &signer);
+        signer.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &false);
     }
 
     /// =======================
