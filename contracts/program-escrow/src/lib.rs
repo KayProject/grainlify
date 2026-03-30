@@ -1012,21 +1012,8 @@ pub struct BatchFundsReleased {
     pub total_amount: i128,
     pub timestamp: u64,
 }
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum BatchError {
-    InvalidBatchSizeProgram = 403,
-    ProgramAlreadyExists = 401,
-    DuplicateProgramId = 402,
-    ProgramNotFound = 404,
-    InvalidAmount = 4,
-    ScheduleNotFound = 405,
-    AlreadyReleased = 406,
-    Unauthorized = 3,
-    FundsPaused = 407,
-    DuplicateScheduleId = 408,
-}
+// BatchError has been replaced by the canonical ContractError enum
+// See errors.rs for the complete error enum
 
 pub const MAX_BATCH_SIZE: u32 = 100;
 
@@ -1138,6 +1125,9 @@ mod test_token_math;
 // mod test_serialization_compatibility;
 #[cfg(test)]
 mod test_storage_layout;
+
+#[cfg(test)]
+mod test_error_discrimination;
 // mod test_payout_splits;
 mod test_batch_limits;
 
@@ -1637,28 +1627,28 @@ impl ProgramEscrowContract {
     /// Batch-initialize multiple programs in one transaction (all-or-nothing).
     ///
     /// # Errors
-    /// * `BatchError::InvalidBatchSize` - empty or len > MAX_BATCH_SIZE
-    /// * `BatchError::DuplicateProgramId` - duplicate program_id in items
-    /// * `BatchError::ProgramAlreadyExists` - a program_id already registered
+    /// * `ContractError::InvalidBatchSize` - empty or len > MAX_BATCH_SIZE
+    /// * `ContractError::DuplicateEntry` - duplicate program_id in items
+    /// * `ContractError::ProgramAlreadyExists` - a program_id already registered
     pub fn batch_initialize_programs(
         env: Env,
         items: Vec<ProgramInitItem>,
-    ) -> Result<u32, BatchError> {
+    ) -> Result<u32, ContractError> {
         let batch_size = items.len() as u32;
         if batch_size == 0 || batch_size > MAX_BATCH_SIZE {
-            return Err(BatchError::InvalidBatchSizeProgram);
+            return Err(ContractError::InvalidBatchSize);
         }
         for i in 0..batch_size {
             for j in (i + 1)..batch_size {
                 if items.get(i).unwrap().program_id == items.get(j).unwrap().program_id {
-                    return Err(BatchError::DuplicateProgramId);
+                    return Err(ContractError::DuplicateEntry);
                 }
             }
         }
         for i in 0..batch_size {
             let program_key = DataKey::Program(items.get(i).unwrap().program_id.clone());
             if env.storage().instance().has(&program_key) {
-                return Err(BatchError::ProgramAlreadyExists);
+                return Err(ContractError::ProgramAlreadyExists);
             }
         }
 
@@ -1676,7 +1666,7 @@ impl ProgramEscrowContract {
             let token_address = item.token_address.clone();
 
             if program_id.is_empty() {
-                return Err(BatchError::InvalidBatchSizeProgram);
+                return Err(ContractError::InvalidProgramId);
             }
 
             let program_data = ProgramData {
