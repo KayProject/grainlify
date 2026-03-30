@@ -63,6 +63,15 @@ pub struct UpgradeEvent {
 /// metadata is stored in instance storage under the same stable `proposal_id`.
 /// `proposer` is optional to preserve compatibility with older proposal rows
 /// that predate explicit proposer storage.
+///
+/// # Expiry Semantics
+/// `expiry == 0` means the proposal never expires. When `expiry > 0` and the
+/// current ledger timestamp is at or past that value, the proposal is considered
+/// expired and can no longer be approved or executed.
+///
+/// # Cancellation Semantics
+/// `cancelled == true` means a signer has explicitly revoked the proposal.
+/// Cancelled proposals can never be re-activated or executed.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UpgradeProposalRecord {
@@ -72,6 +81,10 @@ pub struct UpgradeProposalRecord {
     pub proposer: Option<Address>,
     /// WASM hash that will be installed if the proposal executes.
     pub wasm_hash: BytesN<32>,
+    /// Expiry ledger timestamp (seconds). `0` means no expiry.
+    pub expiry: u64,
+    /// Whether the proposal was explicitly cancelled by a signer.
+    pub cancelled: bool,
 }
 
 // ==================== MONITORING MODULE ====================
@@ -1113,9 +1126,9 @@ impl GrainlifyContract {
     ///
     /// # Proposal Lifecycle
     /// 1. Allocates a fresh, monotonic proposal identifier from [`MultiSig`].
-    /// 2. Stores the upgrade metadata (`wasm_hash`, `proposer`) under that id.
-    /// 3. Returns the identifier for later calls to [`approve_upgrade`] and
-    ///    [`execute_upgrade`].
+    /// 2. Stores the upgrade metadata (`wasm_hash`, `proposer`, `expiry`) under that id.
+    /// 3. Returns the identifier for later calls to [`approve_upgrade`],
+    ///    [`execute_upgrade`], and [`cancel_upgrade`].
     ///
     /// Proposal identifiers are stable and never intentionally reused. This
     /// function panics if a freshly allocated id would overwrite existing
@@ -1123,13 +1136,20 @@ impl GrainlifyContract {
     ///
     /// # Arguments
     /// * `env` - The contract environment
-    /// * `proposer` - Address proposing the upgrade
+    /// * `proposer` - Address proposing the upgrade (must be a multisig signer)
     /// * `wasm_hash` - Hash of the new WASM code
+    /// * `expiry` - Ledger timestamp (seconds) after which the proposal expires
+    ///   and can no longer be approved or executed. Pass `0` for no expiry.
     ///
     /// # Returns
     /// * `u64` - The proposal ID
-    pub fn propose_upgrade(env: Env, proposer: Address, wasm_hash: BytesN<32>) -> u64 {
-        let proposal_id = MultiSig::propose(&env, proposer.clone());
+    pub fn propose_upgrade(
+        env: Env,
+        proposer: Address,
+        wasm_hash: BytesN<32>,
+        expiry: u64,
+    ) -> u64 {
+        let proposal_id = MultiSig::propose(&env, proposer.clone(), expiry);
 
         if env
             .storage()
@@ -1162,8 +1182,41 @@ impl GrainlifyContract {
     ///
     /// The `proposal_id` must be the stable identifier returned by
     /// [`propose_upgrade`]. Approval state is maintained by [`MultiSig`].
+    ///
+    /// # Panics
+    /// - If the proposal has expired (ledger time >= expiry and expiry != 0).
+    /// - If the proposal has been cancelled.
     pub fn approve_upgrade(env: Env, proposal_id: u64, signer: Address) {
         MultiSig::approve(&env, proposal_id, signer);
+    }
+
+    /// Cancels a pending upgrade proposal.
+    ///
+    /// Any signer may cancel a proposal that has not yet been executed.
+    /// Cancellation is irreversible — a cancelled proposal can never be
+    /// re-activated or executed. This prevents stale WASM hashes from
+    /// accumulating as potential attack surface after a governance deadline.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `proposal_id` - The ID of the upgrade proposal to cancel
+    /// * `canceller` - A signer requesting cancellation (requires auth)
+    ///
+    /// # Panics
+    /// - If `canceller` is not in the multisig signer set.
+    /// - If the proposal does not exist.
+    /// - If the proposal has already been executed.
+    /// - If the proposal has already been cancelled.
+    ///
+    /// # Events
+    /// Emits `("cancelled",)` → `(proposal_id, canceller)` on success.
+    pub fn cancel_upgrade(env: Env, proposal_id: u64, canceller: Address) {
+        // Verify the upgrade proposal record exists before delegating to multisig.
+        if Self::load_upgrade_proposal(&env, proposal_id).is_none() {
+            panic!("Upgrade proposal not found");
+        }
+
+        MultiSig::cancel(&env, proposal_id, canceller);
     }
 
     /// Returns the upgrade proposal metadata stored for `proposal_id`.
@@ -1278,6 +1331,12 @@ impl GrainlifyContract {
     /// (collected via [`approve_upgrade`]) acts as the authorization gate.
     /// Panics with `"Threshold not met"` if quorum has not been reached.
     ///
+    /// # Expiry / Cancellation
+    /// Panics with `"Proposal expired"` if the proposal's deadline has passed.
+    /// Panics with `"Proposal cancelled"` if the proposal was explicitly cancelled.
+    /// This ensures stale WASM hashes from lapsed governance windows can never
+    /// be executed.
+    ///
     /// # Events
     /// Emits `("upgrade", "wasm")` → [`UpgradeEvent`] on success.
     ///
@@ -1297,6 +1356,28 @@ impl GrainlifyContract {
                 false,
             );
             panic!("Contract state inconsistent - upgrade blocked");
+        }
+
+        // Reject cancelled proposals before any further checks.
+        if MultiSig::is_cancelled(&env, proposal_id) {
+            monitoring::track_operation(
+                &env,
+                Symbol::new(&env, "execute_upgrade"),
+                env.current_contract_address(),
+                false,
+            );
+            panic!("Proposal cancelled");
+        }
+
+        // Reject expired proposals — stale WASM hashes must not be executable.
+        if MultiSig::is_expired(&env, proposal_id) {
+            monitoring::track_operation(
+                &env,
+                Symbol::new(&env, "execute_upgrade"),
+                env.current_contract_address(),
+                false,
+            );
+            panic!("Proposal expired");
         }
 
         // Verify proposal exists and has sufficient approvals
@@ -1366,10 +1447,17 @@ impl GrainlifyContract {
             .instance()
             .get(&DataKey::UpgradeProposalProposer(proposal_id));
 
+        // Pull expiry and cancelled state from the underlying multisig Proposal.
+        let (expiry, cancelled) = MultiSig::get_proposal_opt(env, proposal_id)
+            .map(|p| (p.expiry, p.cancelled))
+            .unwrap_or((0, false));
+
         Some(UpgradeProposalRecord {
             proposal_id,
             proposer,
             wasm_hash,
+            expiry,
+            cancelled,
         })
     }
 
