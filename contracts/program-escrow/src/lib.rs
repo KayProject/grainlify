@@ -202,45 +202,45 @@ mod metadata;
 pub use metadata::*;
 
 // Event types - using namespace-protected symbols
-const PROGRAM_INITIALIZED: Symbol = program_escrow::PROGRAM_INITIALIZED;
-const FUNDS_LOCKED: Symbol = program_escrow::FUNDS_LOCKED;
-const BATCH_FUNDS_LOCKED: Symbol = program_escrow::BATCH_FUNDS_LOCKED;
-const BATCH_FUNDS_RELEASED: Symbol = program_escrow::BATCH_FUNDS_RELEASED;
-const BATCH_PAYOUT: Symbol = program_escrow::BATCH_PAYOUT;
-const PAYOUT: Symbol = program_escrow::PAYOUT;
-const EVENT_VERSION_V2: u32 = shared::EVENT_VERSION_V2;
-const PAUSE_STATE_CHANGED: Symbol = program_escrow::PAUSE_STATE_CHANGED;
-const MAINTENANCE_MODE_CHANGED: Symbol = program_escrow::MAINTENANCE_MODE_CHANGED;
-const READ_ONLY_MODE_CHANGED: Symbol = program_escrow::READ_ONLY_MODE_CHANGED;
-const PROGRAM_RISK_FLAGS_UPDATED: Symbol = program_escrow::PROGRAM_RISK_FLAGS_UPDATED;
-const PROGRAM_REGISTRY: Symbol = program_escrow::PROGRAM_REGISTRY;
-const PROGRAM_REGISTERED: Symbol = program_escrow::PROGRAM_REGISTERED;
-const RELEASE_SCHEDULED: Symbol = program_escrow::RELEASE_SCHEDULED;
-const SCHEDULE_RELEASED: Symbol = program_escrow::SCHEDULE_RELEASED;
-const PROGRAM_DELEGATE_SET: Symbol = program_escrow::PROGRAM_DELEGATE_SET;
-const PROGRAM_DELEGATE_REVOKED: Symbol = program_escrow::PROGRAM_DELEGATE_REVOKED;
-const PROGRAM_METADATA_UPDATED: Symbol = program_escrow::PROGRAM_METADATA_UPDATED;
+const PROGRAM_INITIALIZED: Symbol = symbol_short!("PrgInit");
+const FUNDS_LOCKED: Symbol = symbol_short!("LckFunds");
+const BATCH_FUNDS_LOCKED: Symbol = symbol_short!("BtchLck");
+const BATCH_FUNDS_RELEASED: Symbol = symbol_short!("BtchRel");
+const BATCH_PAYOUT: Symbol = symbol_short!("BtchPay");
+const PAYOUT: Symbol = symbol_short!("Payout");
+const EVENT_VERSION_V2: u32 = 2;
+const PAUSE_STATE_CHANGED: Symbol = symbol_short!("Pausechg");
+const MAINTENANCE_MODE_CHANGED: Symbol = symbol_short!("MntMode");
+const READ_ONLY_MODE_CHANGED: Symbol = symbol_short!("ROMood");
+const PROGRAM_RISK_FLAGS_UPDATED: Symbol = symbol_short!("RskFlgUp");
+const PROGRAM_REGISTRY: Symbol = symbol_short!("PrgReg");
+const PROGRAM_REGISTERED: Symbol = symbol_short!("PrgRgd");
+const RELEASE_SCHEDULED: Symbol = symbol_short!("RelSched");
+const SCHEDULE_RELEASED: Symbol = symbol_short!("SchRel");
+const PROGRAM_DELEGATE_SET: Symbol = symbol_short!("PrgDlgS");
+const PROGRAM_DELEGATE_REVOKED: Symbol = symbol_short!("PrgDlgR");
+const PROGRAM_METADATA_UPDATED: Symbol = symbol_short!("PrgMeta");
 
 // Storage keys - using namespace-protected symbols
-const PROGRAM_DATA: Symbol = program_escrow::PROGRAM_DATA;
-const RECEIPT_ID: Symbol = program_escrow::RECEIPT_ID;
-const SCHEDULES: Symbol = program_escrow::SCHEDULES;
-const RELEASE_HISTORY: Symbol = program_escrow::RELEASE_HISTORY;
-const NEXT_SCHEDULE_ID: Symbol = program_escrow::NEXT_SCHEDULE_ID;
-const PROGRAM_INDEX: Symbol = program_escrow::PROGRAM_INDEX;
-const AUTH_KEY_INDEX: Symbol = program_escrow::AUTH_KEY_INDEX;
-const FEE_CONFIG: Symbol = program_escrow::FEE_CONFIG;
-const FEE_COLLECTED: Symbol = program_escrow::FEE_COLLECTED;
+const PROGRAM_DATA: Symbol = symbol_short!("PrgData");
+const RECEIPT_ID: Symbol = symbol_short!("RcptId");
+const SCHEDULES: Symbol = symbol_short!("Scheds");
+const RELEASE_HISTORY: Symbol = symbol_short!("RelHist");
+const NEXT_SCHEDULE_ID: Symbol = symbol_short!("NxtSchId");
+const PROGRAM_INDEX: Symbol = symbol_short!("PrgIdx");
+const AUTH_KEY_INDEX: Symbol = symbol_short!("AuthIdx");
+const FEE_CONFIG: Symbol = symbol_short!("FeeCfg");
+const FEE_COLLECTED: Symbol = symbol_short!("FeeCol");
 
 // Fee rate is stored in basis points (1 basis point = 0.01%)
 // Example: 100 basis points = 1%, 1000 basis points = 10%
-const BASIS_POINTS: i128 = shared::BASIS_POINTS;
+const BASIS_POINTS: i128 = 10_000;
 const MAX_FEE_RATE: i128 = 1_000; // Maximum 10% fee
 
-pub const RISK_FLAG_HIGH_RISK: u32 = shared::RISK_FLAG_HIGH_RISK;
-pub const RISK_FLAG_UNDER_REVIEW: u32 = shared::RISK_FLAG_UNDER_REVIEW;
-pub const RISK_FLAG_RESTRICTED: u32 = shared::RISK_FLAG_RESTRICTED;
-pub const RISK_FLAG_DEPRECATED: u32 = shared::RISK_FLAG_DEPRECATED;
+pub const RISK_FLAG_HIGH_RISK: u32 = 1;
+pub const RISK_FLAG_UNDER_REVIEW: u32 = 2;
+pub const RISK_FLAG_RESTRICTED: u32 = 4;
+pub const RISK_FLAG_DEPRECATED: u32 = 8;
 pub const STORAGE_SCHEMA_VERSION: u32 = 1;
 pub const DELEGATE_PERMISSION_RELEASE: u32 = 1 << 0;
 pub const DELEGATE_PERMISSION_REFUND: u32 = 1 << 1;
@@ -623,10 +623,10 @@ pub struct ProgramMetadata {
     pub program_name: Option<String>,
     pub program_type: Option<String>,
     pub ecosystem: Option<String>,
-    pub tags: Vec<String>,
+    pub tags: soroban_sdk::Vec<String>,
     pub start_date: Option<u64>,
     pub end_date: Option<u64>,
-    pub custom_fields: Vec<ProgramMetadataField>,
+    pub custom_fields: soroban_sdk::Vec<ProgramMetadataField>,
 }
 
 /// The lifecycle state of a program escrow.
@@ -670,7 +670,7 @@ pub struct ProgramData {
     pub authorized_payout_key: Address,
     pub delegate: Option<Address>,
     pub delegate_permissions: u32,
-    pub payout_history: Vec<PayoutRecord>,
+    pub payout_history: soroban_sdk::Vec<PayoutRecord>,
     pub token_address: Address,
     pub initial_liquidity: i128,
     pub risk_flags: u32,
@@ -747,8 +747,8 @@ pub struct DisputeResolvedEvent {
 }
 
 // Event symbols for dispute lifecycle - using namespace-protected symbols
-const DISPUTE_OPENED: Symbol = program_escrow::DISPUTE_OPENED;
-const DISPUTE_RESOLVED: Symbol = program_escrow::DISPUTE_RESOLVED;
+const DISPUTE_OPENED: Symbol = symbol_short!("DisptOp");
+const DISPUTE_RESOLVED: Symbol = symbol_short!("DisptRe");
 
 /// Bucket for a single period of time-weighted metrics
 #[contracttype]
@@ -802,7 +802,7 @@ pub enum DataKey {
     Program(String),                 // program_id -> ProgramData
     Admin,                           // Contract Admin
     ReleaseSchedule(String, u64),    // program_id, schedule_id -> ProgramReleaseSchedule
-    ReleaseHistory(String),          // program_id -> Vec<ProgramReleaseHistory>
+    ReleaseHistory(String),          // program_id -> soroban_sdk::Vec<ProgramReleaseHistory>
     NextScheduleId(String),          // program_id -> next schedule_id
     MultisigConfig(String),          // program_id -> MultisigConfig
     SplitConfig(String),             // program_id -> SplitConfig (payout splits)
@@ -813,7 +813,7 @@ pub enum DataKey {
     RateLimitConfig,                 // RateLimitConfig struct
     MaintenanceMode,                 // bool flag
     ReadOnlyMode,                    // bool flag — blocks all state mutations
-    ProgramDependencies(String),     // program_id -> Vec<String>
+    ProgramDependencies(String),     // program_id -> soroban_sdk::Vec<String>
     DependencyStatus(String),        // program_id -> DependencyStatus
     Dispute,  
     DisputeRecord(String),                     // DisputeRecord (single active dispute per contract)
@@ -971,7 +971,7 @@ pub struct ProgramInitItem {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultisigConfig {
     pub threshold_amount: i128,
-    pub signers: Vec<Address>,
+    pub signers: soroban_sdk::Vec<Address>,
     pub required_signatures: u32,
 }
 
@@ -982,7 +982,7 @@ pub struct ProgramAggregateStats {
     pub remaining_balance: i128,
     pub total_paid_out: i128,
     pub authorized_payout_key: Address,
-    pub payout_history: Vec<PayoutRecord>,
+    pub payout_history: soroban_sdk::Vec<PayoutRecord>,
     pub token_address: Address,
     pub payout_count: u32,
     pub scheduled_count: u32,
@@ -1037,7 +1037,7 @@ fn vec_contains(values: &Vec<String>, target: &String) -> bool {
     false
 }
 
-fn get_program_dependencies_internal(env: &Env, program_id: &String) -> Vec<String> {
+fn get_program_dependencies_internal(env: &Env, program_id: &String) -> soroban_sdk::Vec<String> {
     env.storage()
         .instance()
         .get(&DataKey::ProgramDependencies(program_id.clone()))
@@ -1055,7 +1055,7 @@ fn path_exists_to_target(
     env: &Env,
     from_program: &String,
     target_program: &String,
-    visited: &mut Vec<String>,
+    visited: &mut soroban_sdk::Vec<String>,
 ) -> bool {
     if *from_program == *target_program {
         return true;
@@ -1164,10 +1164,10 @@ pub struct StorageLayoutVerification {
 
 #[contractimpl]
 impl ProgramEscrowContract {
-    fn order_batch_lock_items(env: &Env, items: &Vec<LockItem>) -> Vec<LockItem> {
-        let mut ordered: Vec<LockItem> = Vec::new(env);
+    fn order_batch_lock_items(env: &Env, items: &Vec<LockItem>) -> soroban_sdk::Vec<LockItem> {
+        let mut ordered: soroban_sdk::Vec<LockItem> = Vec::new(env);
         for item in items.iter() {
-            let mut next: Vec<LockItem> = Vec::new(env);
+            let mut next: soroban_sdk::Vec<LockItem> = Vec::new(env);
             let mut inserted = false;
             for existing in ordered.iter() {
                 // String comparison for deterministic ordering
@@ -1185,10 +1185,10 @@ impl ProgramEscrowContract {
         ordered
     }
 
-    fn order_batch_release_items(env: &Env, items: &Vec<ReleaseItem>) -> Vec<ReleaseItem> {
-        let mut ordered: Vec<ReleaseItem> = Vec::new(env);
+    fn order_batch_release_items(env: &Env, items: &Vec<ReleaseItem>) -> soroban_sdk::Vec<ReleaseItem> {
+        let mut ordered: soroban_sdk::Vec<ReleaseItem> = Vec::new(env);
         for item in items.iter() {
-            let mut next: Vec<ReleaseItem> = Vec::new(env);
+            let mut next: soroban_sdk::Vec<ReleaseItem> = Vec::new(env);
             let mut inserted = false;
             for existing in ordered.iter() {
                 // Sort by program_id then schedule_id
@@ -1253,26 +1253,6 @@ impl ProgramEscrowContract {
         )
     }
 
-    /// Publish a program, transitioning it from Draft → Active status.
-    /// This must be called before lock_program_funds() or payouts can occur.
-    /// Only the program creator/admin can call this.
-    pub fn publish_program(env: Env) -> ProgramData {
-        let admin = Self::require_admin(&env);
-        let mut program_data: ProgramData = env
-            .storage()
-            .instance()
-            .get(&PROGRAM_DATA)
-            .expect("Program not initialized");
-
-        if program_data.status == ProgramStatus::Active {
-            panic!("Program is already published");
-        }
-
-        program_data.status = ProgramStatus::Active;
-        env.storage().instance().set(&PROGRAM_DATA, &program_data);
-        let _ = admin;
-        program_data
-    }
 
     pub fn initialize_program(
         env: Env,
@@ -1366,7 +1346,7 @@ impl ProgramEscrowContract {
         let program_key = DataKey::Program(program_id.clone());
         env.storage().instance().set(&program_key, &program_data);
 
-        let mut registry: Vec<String> = env
+        let mut registry: soroban_sdk::Vec<String> = env
             .storage()
             .instance()
             .get(&PROGRAM_REGISTRY)
@@ -1384,7 +1364,7 @@ impl ProgramEscrowContract {
         }
 
         // Track dependencies (default empty)
-        let empty_dependencies: Vec<String> = vec![&env];
+        let empty_dependencies: soroban_sdk::Vec<String> = vec![&env];
         env.storage().instance().set(
             &DataKey::ProgramDependencies(program_id.clone()),
             &empty_dependencies,
@@ -1624,37 +1604,6 @@ impl ProgramEscrowContract {
         result
     }
 
-    /// Query programs by tag
-    pub fn query_programs_by_tag(env: Env, tag: String, start: u32, limit: u32) -> soroban_sdk::Vec<String> {
-        let registry: soroban_sdk::Vec<String> = env.storage().instance().get(&PROGRAM_REGISTRY).unwrap_or(soroban_sdk::Vec::new(&env));
-        let mut result = soroban_sdk::Vec::new(&env);
-        let mut count = 0;
-        let mut skipped = 0;
-
-        for id in registry.iter() {
-            if let Some(program) = env.storage().instance().get::<_, ProgramData>(&DataKey::Program(id.clone())) {
-                {
-                    let meta = &program.metadata;
-                    let mut has_tag = false;
-                    for t in meta.tags.iter() {
-                        if t == tag {
-                            has_tag = true;
-                            break;
-                        }
-                    }
-                    if has_tag {
-                        if skipped < start {
-                            skipped += 1;
-                        } else if count < limit {
-                            result.push_back(id.clone());
-                            count += 1;
-                        }
-                    }
-                }
-            }
-        }
-        result
-    }
 
     /// Query programs by tag
     pub fn query_programs_by_tag(
@@ -1706,28 +1655,28 @@ impl ProgramEscrowContract {
     /// * `ContractError::ProgramAlreadyExists` - a program_id already registered
     pub fn batch_initialize_programs(
         env: Env,
-        items: Vec<ProgramInitItem>,
-    ) -> Result<u32, ContractError> {
+        items: soroban_sdk::Vec<ProgramInitItem>,
+    ) -> Result<u32, grainlify_core::errors::ContractError> {
         let batch_size = items.len() as u32;
         if batch_size == 0 || batch_size > MAX_BATCH_SIZE {
-            return Err(ContractError::InvalidBatchSize);
+            return Err(grainlify_core::errors::ContractError::InvalidBatchSize);
         }
         for i in 0..batch_size {
             for j in (i + 1)..batch_size {
                 if items.get(i).unwrap().program_id == items.get(j).unwrap().program_id {
-                    return Err(ContractError::DuplicateEntry);
+                    return Err(grainlify_core::errors::ContractError::DuplicateEntry);
                 }
             }
         }
         for i in 0..batch_size {
             let program_key = DataKey::Program(items.get(i).unwrap().program_id.clone());
             if env.storage().instance().has(&program_key) {
-                return Err(ContractError::ProgramAlreadyExists);
+                return Err(grainlify_core::errors::ContractError::ProgramAlreadyExists);
             }
         }
 
         // Update registry
-        let mut registry: Vec<String> = env
+        let mut registry: soroban_sdk::Vec<String> = env
             .storage()
             .instance()
             .get(&PROGRAM_REGISTRY)
@@ -1740,7 +1689,7 @@ impl ProgramEscrowContract {
             let token_address = item.token_address.clone();
 
             if program_id.is_empty() {
-                return Err(ContractError::InvalidProgramId);
+                return Err(grainlify_core::errors::ContractError::InvalidProgramId);
             }
 
             let program_data = ProgramData {
@@ -2153,8 +2102,8 @@ impl ProgramEscrowContract {
     }
 
     /// Get all archived program IDs.
-    pub fn get_archived_programs(env: Env) -> Vec<String> {
-        let registry: Vec<String> = env
+    pub fn get_archived_programs(env: Env) -> soroban_sdk::Vec<String> {
+        let registry: soroban_sdk::Vec<String> = env
             .storage()
             .instance()
             .get(&PROGRAM_REGISTRY)
@@ -2482,7 +2431,7 @@ impl ProgramEscrowContract {
         program_data
     }
 
-    pub fn get_program_release_schedules(env: Env) -> Vec<ProgramReleaseSchedule> {
+    pub fn get_program_release_schedules(env: Env) -> soroban_sdk::Vec<ProgramReleaseSchedule> {
         env.storage()
             .instance()
             .get(&SCHEDULES)
@@ -2875,15 +2824,15 @@ impl ProgramEscrowContract {
     /// - Requires authorization from the `authorized_payout_key`.
     /// - Protected by reentrancy guard.
     /// - Respects circuit breaker and threshold limits.
-    pub fn batch_payout(env: Env, recipients: Vec<Address>, amounts: Vec<i128>) -> ProgramData {
+    pub fn batch_payout(env: Env, recipients: soroban_sdk::Vec<Address>, amounts: soroban_sdk::Vec<i128>) -> ProgramData {
         Self::batch_payout_internal(env, None, recipients, amounts)
     }
 
     pub fn batch_payout_by(
         env: Env,
         caller: Address,
-        recipients: Vec<Address>,
-        amounts: Vec<i128>,
+        recipients: soroban_sdk::Vec<Address>,
+        amounts: soroban_sdk::Vec<i128>,
     ) -> ProgramData {
         Self::batch_payout_internal(env, Some(caller), recipients, amounts)
     }
@@ -2891,8 +2840,8 @@ impl ProgramEscrowContract {
     fn batch_payout_internal(
         env: Env,
         caller: Option<Address>,
-        recipients: Vec<Address>,
-        amounts: Vec<i128>,
+        recipients: soroban_sdk::Vec<Address>,
+        amounts: soroban_sdk::Vec<i128>,
     ) -> ProgramData {
         // Validation precedence (deterministic ordering):
         // 1. Reentrancy guard
@@ -3329,7 +3278,7 @@ impl ProgramEscrowContract {
             panic!("Amount must be greater than zero");
         }
 
-        let mut schedules: Vec<ProgramReleaseSchedule> = env
+        let mut schedules: soroban_sdk::Vec<ProgramReleaseSchedule> = env
             .storage()
             .instance()
             .get(&SCHEDULES)
@@ -3406,12 +3355,12 @@ impl ProgramEscrowContract {
             panic!("Funds Paused");
         }
 
-        let mut schedules: Vec<ProgramReleaseSchedule> = env
+        let mut schedules: soroban_sdk::Vec<ProgramReleaseSchedule> = env
             .storage()
             .instance()
             .get(&SCHEDULES)
             .unwrap_or_else(|| Vec::new(&env));
-        let mut release_history: Vec<ProgramReleaseHistory> = env
+        let mut release_history: soroban_sdk::Vec<ProgramReleaseHistory> = env
             .storage()
             .instance()
             .get(&RELEASE_HISTORY)
@@ -3482,7 +3431,7 @@ impl ProgramEscrowContract {
         released_count
     }
 
-    pub fn get_release_schedules(env: Env) -> Vec<ProgramReleaseSchedule> {
+    pub fn get_release_schedules(env: Env) -> soroban_sdk::Vec<ProgramReleaseSchedule> {
         if let Some(info) = env
             .storage()
             .instance()
@@ -3498,7 +3447,7 @@ impl ProgramEscrowContract {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
-    pub fn get_program_release_history(env: Env) -> Vec<ProgramReleaseHistory> {
+    pub fn get_program_release_history(env: Env) -> soroban_sdk::Vec<ProgramReleaseHistory> {
         env.storage()
             .instance()
             .get(&RELEASE_HISTORY)
@@ -3592,7 +3541,7 @@ impl ProgramEscrowContract {
         program_data
     }
 
-    pub fn batch_lock(env: Env, items: Vec<LockItem>) -> u32 {
+    pub fn batch_lock(env: Env, items: soroban_sdk::Vec<LockItem>) -> u32 {
         let count = items.len() as u32;
         if count == 0 || count > MAX_BATCH_SIZE {
             panic!("Invalid batch size");
@@ -3617,7 +3566,7 @@ impl ProgramEscrowContract {
         count
     }
 
-    pub fn batch_release(env: Env, items: Vec<ReleaseItem>) -> u32 {
+    pub fn batch_release(env: Env, items: soroban_sdk::Vec<ReleaseItem>) -> u32 {
         let count = items.len() as u32;
         if count == 0 || count > MAX_BATCH_SIZE {
             panic!("Invalid batch size");
@@ -3703,8 +3652,8 @@ impl ProgramEscrowContract {
     pub fn batch_payout_v2(
         env: Env,
         _program_id: String,
-        recipients: Vec<Address>,
-        amounts: Vec<i128>,
+        recipients: soroban_sdk::Vec<Address>,
+        amounts: soroban_sdk::Vec<i128>,
     ) -> ProgramData {
         Self::batch_payout(env, recipients, amounts)
     }
@@ -3714,7 +3663,7 @@ impl ProgramEscrowContract {
     pub fn set_split_config(
         env: Env,
         program_id: String,
-        beneficiaries: Vec<BeneficiarySplit>,
+        beneficiaries: soroban_sdk::Vec<BeneficiarySplit>,
     ) -> SplitConfig {
         if let Some(admin) = env.storage().instance().get::<_, Address>(&DataKey::Admin) {
             admin.require_auth();
@@ -3770,7 +3719,7 @@ impl ProgramEscrowContract {
         env: Env,
         program_id: String,
         total_amount: i128,
-    ) -> Vec<BeneficiarySplit> {
+    ) -> soroban_sdk::Vec<BeneficiarySplit> {
         payout_splits::preview_split(&env, &program_id, total_amount)
     }
 
@@ -3780,7 +3729,7 @@ impl ProgramEscrowContract {
         recipient: Address,
         offset: u32,
         limit: u32,
-    ) -> Vec<PayoutRecord> {
+    ) -> soroban_sdk::Vec<PayoutRecord> {
         let program_data: ProgramData = env
             .storage()
             .instance()
@@ -3815,7 +3764,7 @@ impl ProgramEscrowContract {
         max_amount: i128,
         offset: u32,
         limit: u32,
-    ) -> Vec<PayoutRecord> {
+    ) -> soroban_sdk::Vec<PayoutRecord> {
         let program_data: ProgramData = env
             .storage()
             .instance()
@@ -3850,7 +3799,7 @@ impl ProgramEscrowContract {
         max_timestamp: u64,
         offset: u32,
         limit: u32,
-    ) -> Vec<PayoutRecord> {
+    ) -> soroban_sdk::Vec<PayoutRecord> {
         let program_data: ProgramData = env
             .storage()
             .instance()
@@ -3884,8 +3833,8 @@ impl ProgramEscrowContract {
         recipient: Address,
         offset: u32,
         limit: u32,
-    ) -> Vec<ProgramReleaseSchedule> {
-        let schedules: Vec<ProgramReleaseSchedule> = env
+    ) -> soroban_sdk::Vec<ProgramReleaseSchedule> {
+        let schedules: soroban_sdk::Vec<ProgramReleaseSchedule> = env
             .storage()
             .instance()
             .get(&SCHEDULES)
@@ -3917,8 +3866,8 @@ impl ProgramEscrowContract {
         released: bool,
         offset: u32,
         limit: u32,
-    ) -> Vec<ProgramReleaseSchedule> {
-        let schedules: Vec<ProgramReleaseSchedule> = env
+    ) -> soroban_sdk::Vec<ProgramReleaseSchedule> {
+        let schedules: soroban_sdk::Vec<ProgramReleaseSchedule> = env
             .storage()
             .instance()
             .get(&SCHEDULES)
@@ -3950,8 +3899,8 @@ impl ProgramEscrowContract {
         recipient: Address,
         offset: u32,
         limit: u32,
-    ) -> Vec<ProgramReleaseHistory> {
-        let history: Vec<ProgramReleaseHistory> = env
+    ) -> soroban_sdk::Vec<ProgramReleaseHistory> {
+        let history: soroban_sdk::Vec<ProgramReleaseHistory> = env
             .storage()
             .instance()
             .get(&RELEASE_HISTORY)
@@ -3984,7 +3933,7 @@ impl ProgramEscrowContract {
             .instance()
             .get(&PROGRAM_DATA)
             .unwrap_or_else(|| panic!("Program not initialized"));
-        let schedules: Vec<ProgramReleaseSchedule> = env
+        let schedules: soroban_sdk::Vec<ProgramReleaseSchedule> = env
             .storage()
             .instance()
             .get(&SCHEDULES)
@@ -4021,7 +3970,7 @@ impl ProgramEscrowContract {
         recipient: Address,
         offset: u32,
         limit: u32,
-    ) -> Vec<PayoutRecord> {
+    ) -> soroban_sdk::Vec<PayoutRecord> {
         let program_data: ProgramData = env
             .storage()
             .instance()
@@ -4050,8 +3999,8 @@ impl ProgramEscrowContract {
     }
 
     /// Get pending schedules (not yet released)
-    pub fn get_pending_schedules(env: Env) -> Vec<ProgramReleaseSchedule> {
-        let schedules: Vec<ProgramReleaseSchedule> = env
+    pub fn get_pending_schedules(env: Env) -> soroban_sdk::Vec<ProgramReleaseSchedule> {
+        let schedules: soroban_sdk::Vec<ProgramReleaseSchedule> = env
             .storage()
             .instance()
             .get(&SCHEDULES)
@@ -4068,8 +4017,8 @@ impl ProgramEscrowContract {
     }
 
     /// Get due schedules (ready to be released)
-    pub fn get_due_schedules(env: Env) -> Vec<ProgramReleaseSchedule> {
-        let schedules: Vec<ProgramReleaseSchedule> = env
+    pub fn get_due_schedules(env: Env) -> soroban_sdk::Vec<ProgramReleaseSchedule> {
+        let schedules: soroban_sdk::Vec<ProgramReleaseSchedule> = env
             .storage()
             .instance()
             .get(&SCHEDULES)
@@ -4088,7 +4037,7 @@ impl ProgramEscrowContract {
 
     /// Get total amount in pending schedules
     pub fn get_total_scheduled_amount(env: Env) -> i128 {
-        let schedules: Vec<ProgramReleaseSchedule> = env
+        let schedules: soroban_sdk::Vec<ProgramReleaseSchedule> = env
             .storage()
             .instance()
             .get(&SCHEDULES)
@@ -4112,7 +4061,7 @@ impl ProgramEscrowContract {
         }
     }
 
-    pub fn list_programs(env: Env) -> Vec<ProgramData> {
+    pub fn list_programs(env: Env) -> soroban_sdk::Vec<ProgramData> {
         let mut results = Vec::new(&env);
         if env.storage().instance().has(&PROGRAM_DATA) {
             let data = Self::get_program_info(env.clone());
@@ -4133,15 +4082,15 @@ impl ProgramEscrowContract {
         panic!("Schedule not found");
     }
 
-    pub fn get_all_prog_release_schedules(env: Env) -> Vec<ProgramReleaseSchedule> {
+    pub fn get_all_prog_release_schedules(env: Env) -> soroban_sdk::Vec<ProgramReleaseSchedule> {
         Self::get_release_schedules(env)
     }
 
-    pub fn get_pending_program_schedules(env: Env) -> Vec<ProgramReleaseSchedule> {
+    pub fn get_pending_program_schedules(env: Env) -> soroban_sdk::Vec<ProgramReleaseSchedule> {
         Self::get_pending_schedules(env)
     }
 
-    pub fn get_due_program_schedules(env: Env) -> Vec<ProgramReleaseSchedule> {
+    pub fn get_due_program_schedules(env: Env) -> soroban_sdk::Vec<ProgramReleaseSchedule> {
         Self::get_due_schedules(env)
     }
 
@@ -4205,7 +4154,7 @@ impl ProgramEscrowContract {
                 .instance()
                 .set(&PROGRAM_DATA, &updated_program_data);
 
-            let mut history: Vec<ProgramReleaseHistory> = env
+            let mut history: soroban_sdk::Vec<ProgramReleaseHistory> = env
                 .storage()
                 .instance()
                 .get(&RELEASE_HISTORY)
@@ -4266,7 +4215,7 @@ impl ProgramEscrowContract {
                 .instance()
                 .set(&PROGRAM_DATA, &updated_program_data);
 
-            let mut history: Vec<ProgramReleaseHistory> = env
+            let mut history: soroban_sdk::Vec<ProgramReleaseHistory> = env
                 .storage()
                 .instance()
                 .get(&RELEASE_HISTORY)
@@ -4618,7 +4567,7 @@ impl ProgramEscrowContract {
         }
 
         let program_data = program_data.unwrap();
-        let schedules: Vec<ProgramReleaseSchedule> = env
+        let schedules: soroban_sdk::Vec<ProgramReleaseSchedule> = env
             .storage()
             .instance()
             .get(&SCHEDULES)
