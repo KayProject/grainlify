@@ -3,7 +3,7 @@
   "contract_name": "BountyEscrowContract",
   "contract_purpose": "Manages bounty escrow with multi-token support, capability-based authorization, two-step admin rotation with timelock, refund-eligibility views, fee configuration, and comprehensive security features including reentrancy protection and rate limiting",
   "version": {
-    "current": "2.1.1",
+    "current": "2.2.0",
     "schema": "1.0.0",
     "history": [
       {
@@ -1441,6 +1441,42 @@
           }
         ],
         "trigger": "Admin toggles maintenance mode (state change only)"
+      },
+      {
+        "name": "ClaimWindowSet",
+        "topic": "cw_set",
+        "description": "Emitted when the admin sets or updates the global claim-window duration. Setting claim_window=0 disables enforcement.",
+        "data": [
+          { "name": "version", "type": "u32", "description": "Always EVENT_VERSION_V2" },
+          { "name": "claim_window", "type": "u64", "description": "New duration in seconds (0 = disabled)" },
+          { "name": "set_by", "type": "Address", "description": "Admin that applied the change" },
+          { "name": "timestamp", "type": "u64", "description": "Ledger timestamp" }
+        ],
+        "trigger": "Successful set_claim_window call"
+      },
+      {
+        "name": "ClaimWindowValidated",
+        "topic": "cw_ok",
+        "description": "Emitted when a pending claim is confirmed to be within its active window. Provides a full audit trail of every successful window check.",
+        "data": [
+          { "name": "version", "type": "u32", "description": "Always EVENT_VERSION_V2" },
+          { "name": "bounty_id", "type": "u64", "description": "Bounty whose claim window was checked" },
+          { "name": "now", "type": "u64", "description": "Current ledger timestamp" },
+          { "name": "expires_at", "type": "u64", "description": "Timestamp at which the pending claim expires" }
+        ],
+        "trigger": "validate_claim_window succeeds (now <= expires_at)"
+      },
+      {
+        "name": "ClaimWindowExpired",
+        "topic": "cw_exp",
+        "description": "Emitted when a pending claim has exceeded its window. Emitted before returning DeadlineNotPassed so the expiry is always visible on-chain.",
+        "data": [
+          { "name": "version", "type": "u32", "description": "Always EVENT_VERSION_V2" },
+          { "name": "bounty_id", "type": "u64", "description": "Bounty whose claim window expired" },
+          { "name": "now", "type": "u64", "description": "Current ledger timestamp" },
+          { "name": "expires_at", "type": "u64", "description": "Timestamp at which the pending claim expired" }
+        ],
+        "trigger": "validate_claim_window fails (now > expires_at)"
       }
     ]
   },

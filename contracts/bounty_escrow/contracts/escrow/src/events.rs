@@ -1767,3 +1767,97 @@ pub fn emit_fee_routing_schema_version_set(env: &Env, event: FeeRoutingSchemaVer
     let topics = (symbol_short!("fee_schm"),);
     env.events().publish(topics, event);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLAIM-WINDOW AUDIT EVENTS  (Issue #29)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Emitted when the admin sets or updates the global claim-window duration.
+///
+/// ### Topics
+/// | Index | Value |
+/// |-------|-------|
+/// | 0 | `"cw_set"` |
+///
+/// ### Security notes
+/// - Setting `claim_window = 0` disables enforcement; all subsequent
+///   `validate_claim_window` calls become no-ops until re-enabled.
+/// - Stored in instance storage under [`crate::DataKey::ClaimWindow`] so
+///   the value survives contract upgrades without migration.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimWindowSet {
+    pub version: u32,
+    /// New claim-window duration in seconds (0 = disabled).
+    pub claim_window: u64,
+    /// Admin address that applied the change.
+    pub set_by: Address,
+    /// Ledger timestamp.
+    pub timestamp: u64,
+}
+
+/// Emit [`ClaimWindowSet`].
+pub fn emit_claim_window_set(env: &Env, event: ClaimWindowSet) {
+    let topics = (symbol_short!("cw_set"),);
+    env.events().publish(topics, event);
+}
+
+/// Emitted when a pending claim is validated as still within its window.
+///
+/// ### Topics
+/// | Index | Value |
+/// |-------|-------|
+/// | 0 | `"cw_ok"` |
+/// | 1 | `bounty_id: u64` |
+///
+/// ### Security notes
+/// - Emitted on every successful `validate_claim_window` call so indexers
+///   can reconstruct the full claim-window audit trail.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimWindowValidated {
+    pub version: u32,
+    /// Bounty whose claim window was checked.
+    pub bounty_id: u64,
+    /// Current ledger timestamp at validation time.
+    pub now: u64,
+    /// Timestamp at which the pending claim expires.
+    pub expires_at: u64,
+}
+
+/// Emit [`ClaimWindowValidated`].
+pub fn emit_claim_window_validated(env: &Env, event: ClaimWindowValidated) {
+    let topics = (symbol_short!("cw_ok"), event.bounty_id);
+    env.events().publish(topics, event);
+}
+
+/// Emitted when a pending claim is found to have exceeded its window.
+///
+/// ### Topics
+/// | Index | Value |
+/// |-------|-------|
+/// | 0 | `"cw_exp"` |
+/// | 1 | `bounty_id: u64` |
+///
+/// ### Security notes
+/// - Emitted **before** returning `Error::DeadlineNotPassed` so the
+///   expiry is always visible on-chain even when the transaction reverts.
+/// - Indexers should treat this event as a signal to prompt the admin to
+///   cancel the stale claim and re-authorize if appropriate.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimWindowExpired {
+    pub version: u32,
+    /// Bounty whose claim window expired.
+    pub bounty_id: u64,
+    /// Current ledger timestamp at validation time.
+    pub now: u64,
+    /// Timestamp at which the pending claim expired.
+    pub expires_at: u64,
+}
+
+/// Emit [`ClaimWindowExpired`].
+pub fn emit_claim_window_expired(env: &Env, event: ClaimWindowExpired) {
+    let topics = (symbol_short!("cw_exp"), event.bounty_id);
+    env.events().publish(topics, event);
+}
