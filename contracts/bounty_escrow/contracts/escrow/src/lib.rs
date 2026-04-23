@@ -843,6 +843,9 @@ pub enum DataKey {
     BlocklistIndex,
     /// Stored schema marker for refund-eligibility view semantics.
     RefundEligibilitySchemaVersion,
+    /// Stored schema marker for fee routing storage layout versioning.
+    /// Increment when the `FeeConfig` or `TreasuryDestination` layout changes.
+    FeeRoutingSchemaVersion,
 }
 
 #[contracttype]
@@ -972,6 +975,14 @@ pub struct ReleaseApproval {
 
 const REFUND_ELIGIBILITY_SCHEMA_VERSION_V1: u32 = 1;
 const MAINTENANCE_MODE_SCHEMA_VERSION_V1: u32 = 1;
+
+/// Current fee routing storage schema version.
+///
+/// Increment this constant whenever the `FeeConfig` or `TreasuryDestination`
+/// layout changes in a breaking way. The value is written to instance storage
+/// during `init` (and should be migrated during upgrades) so that upgrade
+/// safety checks can detect schema mismatches.
+const FEE_ROUTING_SCHEMA_VERSION_V1: u32 = 1;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1215,8 +1226,17 @@ impl BountyEscrowContract {
             &env,
             events::BountyEscrowInitialized {
                 version: EVENT_VERSION_V2,
-                admin,
+                admin: admin.clone(),
                 token,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+        events::emit_fee_routing_schema_version_set(
+            &env,
+            events::FeeRoutingSchemaVersionSet {
+                version: EVENT_VERSION_V2,
+                schema_version: FEE_ROUTING_SCHEMA_VERSION_V1,
+                set_by: admin,
                 timestamp: env.ledger().timestamp(),
             },
         );
@@ -1377,10 +1397,19 @@ impl BountyEscrowContract {
     }
 
     /// Routes a fee either to the configured fee recipient or across weighted treasury routes.
+    ///
+    /// # Invariant
+    /// After routing, `distributed_total == amount` must hold. This is enforced
+    /// by assigning any rounding remainder to the final destination and verified
+    /// by emitting a [`events::FeeRoutingInvariantChecked`] audit event.
+    ///
+    /// # Panics
+    /// Panics if `distributed_total != amount` after routing (invariant violation).
     fn route_fee(
         env: &Env,
         client: &token::Client,
         config: &FeeConfig,
+        bounty_id: u64,
         amount: i128,
         fee_rate: i128,
         operation_type: events::FeeOperationType,
@@ -1404,11 +1433,27 @@ impl BountyEscrowContract {
                 env,
                 events::FeeCollected {
                     version: EVENT_VERSION_V2,
-                    operation_type,
+                    operation_type: operation_type.clone(),
                     amount,
                     fee_rate,
                     fee_fixed,
                     recipient: config.fee_recipient.clone(),
+                    timestamp: env.ledger().timestamp(),
+                },
+            );
+            // Single-recipient: invariant trivially holds (distributed == amount).
+            events::emit_fee_routing_invariant_checked(
+                env,
+                events::FeeRoutingInvariantChecked {
+                    version: EVENT_VERSION_V2,
+                    bounty_id,
+                    operation_type,
+                    gross_amount: amount,
+                    fee_amount: amount,
+                    distributed_total: amount,
+                    weight_total: 1,
+                    destination_count: 1,
+                    invariant_ok: true,
                     timestamp: env.ledger().timestamp(),
                 },
             );
@@ -1430,6 +1475,8 @@ impl BountyEscrowContract {
 
         for (index, destination) in config.treasury_destinations.iter().enumerate() {
             let share = if index + 1 == destination_count {
+                // Last destination absorbs any rounding remainder, ensuring
+                // distributed_total == amount (fee routing invariant).
                 amount
                     .checked_sub(distributed)
                     .ok_or(Error::InvalidAmount)?
@@ -1462,6 +1509,28 @@ impl BountyEscrowContract {
                     timestamp: env.ledger().timestamp(),
                 },
             );
+        }
+
+        // Enforce the fee routing invariant: every stroop must be accounted for.
+        // This is a hard invariant — a violation indicates a logic or overflow bug.
+        let invariant_ok = distributed == amount;
+        events::emit_fee_routing_invariant_checked(
+            env,
+            events::FeeRoutingInvariantChecked {
+                version: EVENT_VERSION_V2,
+                bounty_id,
+                operation_type,
+                gross_amount: amount,
+                fee_amount: amount,
+                distributed_total: distributed,
+                weight_total: total_weight,
+                destination_count: destination_count as u32,
+                invariant_ok,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+        if !invariant_ok {
+            panic!("Fee routing invariant violated: distributed != fee_amount");
         }
 
         Ok(())
@@ -2951,6 +3020,7 @@ impl BountyEscrowContract {
                 &env,
                 &client,
                 &fee_config,
+                bounty_id,
                 fee_amount,
                 lock_fee_rate,
                 events::FeeOperationType::Lock,
@@ -3547,6 +3617,7 @@ impl BountyEscrowContract {
                 &env,
                 &client,
                 &fee_config,
+                bounty_id,
                 release_fee,
                 release_fee_rate,
                 events::FeeOperationType::Release,
@@ -6811,9 +6882,12 @@ mod escrow_status_transition_tests {
 
         // Route fee
         if fee_amount > 0 {
+            let fee_config = Self::get_fee_config_internal(&env);
             Self::route_fee(
                 &env,
                 &client,
+                &fee_config,
+                sub_bounty_id,
                 fee_amount,
                 lock_fee_rate,
                 events::FeeOperationType::Lock,

@@ -3,7 +3,7 @@
   "contract_name": "BountyEscrowContract",
   "contract_purpose": "Manages bounty escrow with multi-token support, capability-based authorization, fee configuration, and comprehensive security features including reentrancy protection and rate limiting",
   "version": {
-    "current": "2.0.0",
+    "current": "2.2.0",
     "schema": "1.0.0",
     "history": [
       {
