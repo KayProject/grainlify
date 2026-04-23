@@ -605,6 +605,24 @@
         "authorization": "any",
         "pausable": false,
         "gas_estimate": "low"
+      },
+      {
+        "name": "get_high_value_config",
+        "description": "View global high-value release config",
+        "parameters": [],
+        "returns": { "type": "Option<HighValueConfig>" },
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "low"
+      },
+      {
+        "name": "get_queued_release",
+        "description": "View queued release details for a bounty",
+        "parameters": [{ "name": "bounty_id", "type": "u64" }],
+        "returns": { "type": "Option<QueuedRelease>" },
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "low"
       }
     ],
     "admin": [
@@ -840,6 +858,18 @@
           "type": "()",
           "description": "Empty on success"
         },
+        "authorization": "admin",
+        "pausable": false,
+        "gas_estimate": "low"
+      },
+      {
+        "name": "set_high_value_config",
+        "description": "Configure the threshold and delay for high-value releases",
+        "parameters": [
+          { "name": "threshold", "type": "i128", "description": "Amount triggering the timelock" },
+          { "name": "duration", "type": "u64", "description": "Timelock duration in seconds" }
+        ],
+        "returns": { "type": "()", "description": "Empty on success" },
         "authorization": "admin",
         "pausable": false,
         "gas_estimate": "low"
