@@ -3,7 +3,7 @@
   "contract_name": "ProgramEscrowContract",
   "contract_purpose": "Handles hackathon and program prize pools with batch payouts, dependency management, circuit breaker protection, and comprehensive monitoring",
   "version": {
-    "current": "2.0.0",
+    "current": "2.3.0",
     "schema": "1.0.0",
     "history": [
       {
@@ -27,6 +27,38 @@
           "Added claim period functionality",
           "Improved fee configuration",
           "Added granular pause controls"
+        ]
+      },
+      {
+        "version": "2.1.0",
+        "release_date": "2026-04-22",
+        "changes": [
+          "Added deterministic spend-threshold enforcement for single and batch payouts",
+          "Added explicit spend-threshold configuration and retrieval entrypoints",
+          "Reused per-program persistent config storage for upgrade-safe threshold state"
+        ]
+      },
+      {
+        "version": "2.2.0",
+        "release_date": "2026-04-22",
+        "changes": [
+          "Hardened history pagination with deterministic limit validation and explicit range errors",
+          "Centralized pagination behavior across payout, schedule, and release history queries",
+          "Added upgrade-safe pagination config storage with backward-compatible defaults"
+        ]
+      },
+      {
+        "version": "2.3.0",
+        "release_date": "2026-04-23",
+        "changes": [
+          "Hardened spend-limit threshold enforcement: enforce_spend_threshold now returns Result and emits SpendLimitExceededEvent before any token transfer",
+          "Added SpendLimitSetEvent audit event emitted after every set_program_spend_threshold call",
+          "Added SpendLimitExceededEvent audit event emitted on every threshold rejection",
+          "Added SpendLimitSchemaVersionSet audit event emitted on init for upgrade-safe schema tracking",
+          "Added SpendLimitSchemaVersion upgrade-safe storage key to instance storage",
+          "Added get_spend_limit_schema_version view entrypoint",
+          "Added ContractError::SpendLimitExceeded (code 904) to canonical error enum",
+          "Deterministic error ordering preserved: threshold check runs before balance and circuit-breaker checks"
         ]
       }
     ]
@@ -188,6 +220,29 @@
         "authorization": "admin",
         "pausable": true,
         "gas_estimate": "medium"
+      },
+      {
+        "name": "set_program_spend_threshold",
+        "description": "Set per-program maximum spend for a single payout operation (single amount or batch total)",
+        "parameters": [
+          {
+            "name": "program_id",
+            "type": "String",
+            "description": "Program identifier"
+          },
+          {
+            "name": "threshold_amount",
+            "type": "i128",
+            "description": "Maximum allowed gross spend per payout operation"
+          }
+        ],
+        "returns": {
+          "type": "()",
+          "description": "Empty on success"
+        },
+        "authorization": "admin",
+        "pausable": false,
+        "gas_estimate": "low"
       },
       {
         "name": "set_program_dependencies",
@@ -383,6 +438,36 @@
         "returns": {
           "type": "PauseFlags",
           "description": "Pause configuration"
+        },
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "low"
+      },
+      {
+        "name": "get_program_spend_threshold",
+        "description": "Get the configured per-program spend threshold",
+        "parameters": [
+          {
+            "name": "program_id",
+            "type": "String",
+            "description": "Program identifier"
+          }
+        ],
+        "returns": {
+          "type": "i128",
+          "description": "Maximum allowed gross spend per payout operation"
+        },
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "low"
+      },
+      {
+        "name": "get_spend_limit_schema_version",
+        "description": "Return the spend-limit storage schema version written during init. Returns 0 on legacy deployments.",
+        "parameters": [],
+        "returns": {
+          "type": "u32",
+          "description": "Schema version (1 = current; 0 = legacy pre-v2.3)"
         },
         "authorization": "any",
         "pausable": false,
@@ -715,6 +800,18 @@
         "data_structure": "PauseFlags"
       },
       {
+        "name": "DataKey::HistoryPaginationConfig",
+        "type": "instance",
+        "description": "History pagination configuration",
+        "data_structure": "HistoryPaginationConfig"
+      },
+      {
+        "name": "DataKey::SpendLimitSchemaVersion",
+        "type": "instance",
+        "description": "Upgrade-safe version marker for spend-limit threshold storage layout. Increment when MultisigConfig schema changes.",
+        "data_structure": "u32"
+      },
+      {
         "name": "SCHEDULES",
         "type": "instance",
         "description": "Release schedules",
@@ -732,7 +829,9 @@
       "Reentrancy protection",
       "Comprehensive monitoring and analytics",
       "Input validation for all parameters",
-      "Overflow protection in arithmetic operations"
+      "Overflow protection in arithmetic operations",
+      "Deterministic spend-threshold checks for payout operations",
+      "Deterministic history pagination checks with explicit validation failures"
     ],
     "access_control": [
       {
@@ -940,6 +1039,44 @@
           }
         ],
         "trigger": "Successful single payout"
+      },
+      {
+        "name": "SpendLimitSetEvent",
+        "description": "Audit event emitted after every set_program_spend_threshold call",
+        "topics": ["SpLimSet", "program_id"],
+        "data": [
+          {"name": "version", "type": "u32", "description": "Always EVENT_VERSION_V2"},
+          {"name": "program_id", "type": "String", "description": "Program the threshold applies to"},
+          {"name": "previous_threshold", "type": "i128", "description": "Previous threshold (i128::MAX = unlimited)"},
+          {"name": "new_threshold", "type": "i128", "description": "New threshold value"},
+          {"name": "set_by", "type": "Address", "description": "Admin that made the change"},
+          {"name": "timestamp", "type": "u64", "description": "Ledger timestamp"}
+        ],
+        "trigger": "Every successful set_program_spend_threshold call"
+      },
+      {
+        "name": "SpendLimitExceededEvent",
+        "description": "Audit event emitted when a payout is rejected for exceeding the spend threshold",
+        "topics": ["SpLimExc", "program_id"],
+        "data": [
+          {"name": "version", "type": "u32", "description": "Always EVENT_VERSION_V2"},
+          {"name": "program_id", "type": "String", "description": "Program the threshold applies to"},
+          {"name": "requested_amount", "type": "i128", "description": "Amount that was requested and rejected"},
+          {"name": "threshold", "type": "i128", "description": "Configured threshold that was exceeded"},
+          {"name": "timestamp", "type": "u64", "description": "Ledger timestamp"}
+        ],
+        "trigger": "Every payout rejected due to spend threshold violation"
+      },
+      {
+        "name": "SpendLimitSchemaVersionSet",
+        "description": "Upgrade-safe marker recording the spend-limit storage schema version",
+        "topics": ["SpLimSch"],
+        "data": [
+          {"name": "version", "type": "u32", "description": "Always EVENT_VERSION_V2"},
+          {"name": "schema_version", "type": "u32", "description": "Spend-limit schema version written to instance storage"},
+          {"name": "timestamp", "type": "u64", "description": "Ledger timestamp"}
+        ],
+        "trigger": "Contract initialization (init_program)"
       }
     ]
   },
