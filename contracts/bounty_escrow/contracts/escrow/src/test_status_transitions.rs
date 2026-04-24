@@ -739,3 +739,220 @@ fn test_admin_rotation_maximum_delay_accepted() {
         .try_propose_admin_rotation(&new_admin, &MAX_ADMIN_ROTATION_DELAY_SECS);
     assert!(result.is_ok(), "maximum delay must be accepted");
 }
+
+// ============================================================================
+// MAINTENANCE MODE HARDENING TESTS (Issue #25)
+// ============================================================================
+//
+// These tests verify the hardened maintenance mode invariants:
+//   - Maintenance mode blocks ALL operations (lock, release, refund)
+//   - Reason is stored and retrievable via get_maintenance_mode_info
+//   - MaintenanceModeChanged audit event is emitted on every toggle
+//   - Upgrade-safe schema version is written on init
+//   - Disabling maintenance mode unblocks all operations
+//   - get_maintenance_mode_info returns structured record
+
+/// MM-1: maintenance mode blocks lock_funds.
+#[test]
+#[should_panic(expected = "Funds Paused")]
+fn test_maintenance_mode_blocks_lock_funds() {
+    let setup = TestSetup::new();
+    setup
+        .escrow
+        .set_maintenance_mode(
+            &true,
+            &Some(soroban_sdk::String::from_str(&setup.env, "scheduled maintenance")),
+        )
+        .unwrap();
+
+    let bounty_id = 300u64;
+    let deadline = setup.env.ledger().timestamp() + 1_000;
+    setup
+        .escrow
+        .lock_funds(&setup.depositor, &bounty_id, &1_000, &deadline);
+}
+
+/// MM-2: maintenance mode blocks release_funds.
+#[test]
+#[should_panic(expected = "Funds Paused")]
+fn test_maintenance_mode_blocks_release_funds() {
+    let setup = TestSetup::new();
+    let bounty_id = 301u64;
+    let deadline = setup.env.ledger().timestamp() + 1_000;
+    setup
+        .escrow
+        .lock_funds(&setup.depositor, &bounty_id, &1_000, &deadline);
+
+    setup
+        .escrow
+        .set_maintenance_mode(&true, &None)
+        .unwrap();
+
+    setup
+        .escrow
+        .release_funds(&bounty_id, &setup.contributor);
+}
+
+/// MM-3: maintenance mode blocks refund.
+#[test]
+#[should_panic(expected = "Funds Paused")]
+fn test_maintenance_mode_blocks_refund() {
+    use soroban_sdk::testutils::Ledger;
+    let setup = TestSetup::new();
+    let bounty_id = 302u64;
+    let deadline = setup.env.ledger().timestamp() + 100;
+    setup
+        .escrow
+        .lock_funds(&setup.depositor, &bounty_id, &1_000, &deadline);
+
+    setup
+        .escrow
+        .set_maintenance_mode(&true, &None)
+        .unwrap();
+
+    setup.env.ledger().set_timestamp(deadline + 1);
+    setup.escrow.refund(&bounty_id);
+}
+
+/// MM-4: disabling maintenance mode unblocks lock_funds.
+#[test]
+fn test_maintenance_mode_disable_unblocks_lock() {
+    let setup = TestSetup::new();
+    setup
+        .escrow
+        .set_maintenance_mode(&true, &None)
+        .unwrap();
+    setup
+        .escrow
+        .set_maintenance_mode(&false, &None)
+        .unwrap();
+
+    let bounty_id = 303u64;
+    let deadline = setup.env.ledger().timestamp() + 1_000;
+    // Must not panic.
+    setup
+        .escrow
+        .lock_funds(&setup.depositor, &bounty_id, &1_000, &deadline);
+    assert_eq!(
+        setup.escrow.get_escrow_info(&bounty_id).status,
+        EscrowStatus::Locked
+    );
+}
+
+/// MM-5: reason is stored and retrievable.
+#[test]
+fn test_maintenance_mode_reason_stored() {
+    let setup = TestSetup::new();
+    let reason = soroban_sdk::String::from_str(&setup.env, "upgrade in progress");
+    setup
+        .escrow
+        .set_maintenance_mode(&true, &Some(reason.clone()))
+        .unwrap();
+
+    let info = setup.escrow.get_maintenance_mode_info();
+    assert!(info.enabled);
+    assert_eq!(info.reason, Some(reason));
+    assert_eq!(info.changed_by, setup.admin);
+}
+
+/// MM-6: MaintenanceModeChanged audit event is emitted on enable.
+#[test]
+fn test_maintenance_mode_enable_emits_event() {
+    let setup = TestSetup::new();
+    let before = setup.env.events().all().len();
+    setup
+        .escrow
+        .set_maintenance_mode(&true, &None)
+        .unwrap();
+    assert!(
+        setup.env.events().all().len() > before,
+        "MaintenanceModeChanged must be emitted on enable"
+    );
+}
+
+/// MM-7: MaintenanceModeChanged audit event is emitted on disable.
+#[test]
+fn test_maintenance_mode_disable_emits_event() {
+    let setup = TestSetup::new();
+    setup
+        .escrow
+        .set_maintenance_mode(&true, &None)
+        .unwrap();
+    let before = setup.env.events().all().len();
+    setup
+        .escrow
+        .set_maintenance_mode(&false, &None)
+        .unwrap();
+    assert!(
+        setup.env.events().all().len() > before,
+        "MaintenanceModeChanged must be emitted on disable"
+    );
+}
+
+/// MM-8: upgrade-safe schema version is written on init.
+#[test]
+fn test_maintenance_mode_schema_version_written_on_init() {
+    let setup = TestSetup::new();
+    let version = setup.escrow.get_maintenance_mode_schema_version();
+    assert_eq!(version, 1u32, "schema version must be 1 after init");
+}
+
+/// MM-9: is_maintenance_mode returns false by default.
+#[test]
+fn test_maintenance_mode_default_is_false() {
+    let setup = TestSetup::new();
+    assert!(!setup.escrow.is_maintenance_mode());
+}
+
+/// MM-10: get_maintenance_mode_info reflects enabled=false after disable.
+#[test]
+fn test_maintenance_mode_info_reflects_disabled_state() {
+    let setup = TestSetup::new();
+    setup
+        .escrow
+        .set_maintenance_mode(&true, &Some(soroban_sdk::String::from_str(&setup.env, "test")))
+        .unwrap();
+    setup
+        .escrow
+        .set_maintenance_mode(&false, &None)
+        .unwrap();
+
+    let info = setup.escrow.get_maintenance_mode_info();
+    assert!(!info.enabled);
+    assert_eq!(info.reason, None);
+}
+
+/// MM-11: multiple toggles each emit an event.
+#[test]
+fn test_maintenance_mode_multiple_toggles_emit_events() {
+    let setup = TestSetup::new();
+    let before = setup.env.events().all().len();
+    setup.escrow.set_maintenance_mode(&true, &None).unwrap();
+    setup.escrow.set_maintenance_mode(&false, &None).unwrap();
+    setup.escrow.set_maintenance_mode(&true, &None).unwrap();
+    assert!(
+        setup.env.events().all().len() >= before + 3,
+        "each toggle must emit an event"
+    );
+}
+
+/// MM-12: maintenance mode does not affect view functions.
+#[test]
+fn test_maintenance_mode_does_not_block_views() {
+    let setup = TestSetup::new();
+    let bounty_id = 304u64;
+    let deadline = setup.env.ledger().timestamp() + 1_000;
+    setup
+        .escrow
+        .lock_funds(&setup.depositor, &bounty_id, &1_000, &deadline);
+
+    setup
+        .escrow
+        .set_maintenance_mode(&true, &None)
+        .unwrap();
+
+    // View functions must still work.
+    let info = setup.escrow.get_escrow_info(&bounty_id);
+    assert_eq!(info.status, EscrowStatus::Locked);
+    assert!(setup.escrow.is_maintenance_mode());
+}

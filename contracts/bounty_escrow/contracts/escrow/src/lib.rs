@@ -801,6 +801,24 @@ pub struct PendingAdminRotation {
     pub proposed_by: Address,
 }
 
+/// Structured maintenance mode record stored under `DataKey::MaintenanceModeInfo`.
+///
+/// Replaces the bare `bool` stored under `DataKey::MaintenanceMode` with a
+/// richer record that carries the reason, the admin who toggled it, and the
+/// timestamp — enabling deterministic audit trails and upgrade-safe migrations.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaintenanceModeRecord {
+    /// Whether maintenance mode is currently active.
+    pub enabled: bool,
+    /// Human-readable reason for enabling maintenance mode (empty when disabled).
+    pub reason: Option<soroban_sdk::String>,
+    /// Ledger timestamp when the mode was last changed.
+    pub changed_at: u64,
+    /// Admin address that last changed the mode.
+    pub changed_by: Address,
+}
+
 #[contracttype]
 pub enum DataKey {
     Admin,
@@ -861,6 +879,10 @@ pub enum DataKey {
     PendingAdminRotation,
     /// Upgrade-safe schema version marker for admin-rotation storage layout.
     AdminRotationSchemaVersion,
+    /// Structured maintenance mode record (replaces bare bool).
+    MaintenanceModeInfo,
+    /// Upgrade-safe schema version marker for maintenance mode storage layout.
+    MaintenanceModeSchemaVersion,
 }
 
 #[contracttype]
@@ -996,6 +1018,12 @@ const REFUND_ELIGIBILITY_SCHEMA_VERSION_V1: u32 = 1;
 /// Written to instance storage during `init` so upgrade safety checks can
 /// detect schema mismatches on legacy deployments.
 const ADMIN_ROTATION_SCHEMA_VERSION_V1: u32 = 1;
+
+/// Current maintenance-mode storage schema version.
+///
+/// Increment whenever `MaintenanceModeRecord` layout changes in a breaking way.
+/// Written to instance storage during `init`.
+const MAINTENANCE_MODE_SCHEMA_VERSION_V1: u32 = 1;
 
 /// Minimum timelock delay for admin rotation: 1 hour.
 pub const MIN_ADMIN_ROTATION_DELAY_SECS: u64 = 3_600;
@@ -1230,6 +1258,11 @@ impl BountyEscrowContract {
         env.storage().instance().set(
             &DataKey::AdminRotationSchemaVersion,
             &ADMIN_ROTATION_SCHEMA_VERSION_V1,
+        );
+        // Write upgrade-safe maintenance-mode schema version marker.
+        env.storage().instance().set(
+            &DataKey::MaintenanceModeSchemaVersion,
+            &MAINTENANCE_MODE_SCHEMA_VERSION_V1,
         );
 
         events::emit_bounty_initialized(
@@ -2060,10 +2093,11 @@ impl BountyEscrowContract {
     /// Check if an operation is paused
     fn check_paused(env: &Env, operation: Symbol) -> bool {
         let flags = Self::get_pause_flags(env);
+        // Maintenance mode blocks ALL operations (lock, release, refund).
+        if Self::is_maintenance_mode(env.clone()) {
+            return true;
+        }
         if operation == symbol_short!("lock") {
-            if Self::is_maintenance_mode(env.clone()) {
-                return true;
-            }
             return flags.lock_paused;
         } else if operation == symbol_short!("release") {
             return flags.release_paused;
@@ -2195,20 +2229,52 @@ impl BountyEscrowContract {
 
     /// Check if the contract is in maintenance mode
     pub fn is_maintenance_mode(env: Env) -> bool {
+        // Check structured record first (v2.5+), fall back to legacy bare bool.
+        if let Some(record) = env
+            .storage()
+            .instance()
+            .get::<DataKey, MaintenanceModeRecord>(&DataKey::MaintenanceModeInfo)
+        {
+            return record.enabled;
+        }
         env.storage()
             .instance()
             .get(&DataKey::MaintenanceMode)
             .unwrap_or(false)
     }
 
-    /// Update maintenance mode (admin only)
-    pub fn set_maintenance_mode(env: Env, enabled: bool) -> Result<(), Error> {
+    /// Update maintenance mode (admin only).
+    ///
+    /// When `enabled` is `true`, **all** operations (lock, release, refund) are
+    /// blocked with `FundsPaused`. An optional `reason` is stored on-chain and
+    /// included in the `MaintenanceModeChanged` audit event.
+    ///
+    /// # Audit event
+    /// Emits `MaintenanceModeChanged` after the record is persisted (CEI).
+    pub fn set_maintenance_mode(
+        env: Env,
+        enabled: bool,
+        reason: Option<soroban_sdk::String>,
+    ) -> Result<(), Error> {
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::NotInitialized);
         }
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
 
+        let now = env.ledger().timestamp();
+        let record = MaintenanceModeRecord {
+            enabled,
+            reason: reason.clone(),
+            changed_at: now,
+            changed_by: admin.clone(),
+        };
+
+        // Write structured record (upgrade-safe).
+        env.storage()
+            .instance()
+            .set(&DataKey::MaintenanceModeInfo, &record);
+        // Keep legacy bare bool in sync for backward compatibility.
         env.storage()
             .instance()
             .set(&DataKey::MaintenanceMode, &enabled);
@@ -2218,10 +2284,37 @@ impl BountyEscrowContract {
             MaintenanceModeChanged {
                 enabled,
                 admin: admin.clone(),
-                timestamp: env.ledger().timestamp(),
+                timestamp: now,
             },
         );
         Ok(())
+    }
+
+    /// Return the structured maintenance mode record.
+    /// Returns a default (disabled, no reason) record when never set.
+    pub fn get_maintenance_mode_info(env: Env) -> MaintenanceModeRecord {
+        env.storage()
+            .instance()
+            .get(&DataKey::MaintenanceModeInfo)
+            .unwrap_or_else(|| MaintenanceModeRecord {
+                enabled: false,
+                reason: None,
+                changed_at: 0,
+                changed_by: env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::Admin)
+                    .unwrap_or_else(|| panic!("not initialized")),
+            })
+    }
+
+    /// Return the maintenance-mode storage schema version written during `init`.
+    /// Returns `0` on legacy deployments where the marker was never written.
+    pub fn get_maintenance_mode_schema_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::MaintenanceModeSchemaVersion)
+            .unwrap_or(0u32)
     }
 
     pub fn set_whitelist(env: Env, address: Address, whitelisted: bool) -> Result<(), Error> {

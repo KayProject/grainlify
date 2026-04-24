@@ -47,7 +47,13 @@
           "Added get_admin_rotation_schema_version: upgrade-safe schema version view",
           "Added AdminRotationProposed, AdminRotationAccepted, AdminRotationCancelled audit events",
           "Added AdminRotationSchemaVersion upgrade-safe storage key written on init",
-          "Added NoPendingAdminRotation (47), AdminRotationTimelockActive (48), AdminRotationAlreadyPending (49), InvalidAdminRotationDelay (50) error codes"
+          "Added NoPendingAdminRotation (47), AdminRotationTimelockActive (48), AdminRotationAlreadyPending (49), InvalidAdminRotationDelay (50) error codes",
+          "Hardened maintenance mode: now blocks ALL operations (lock, release, refund)",
+          "set_maintenance_mode now accepts optional reason stored in MaintenanceModeRecord",
+          "Added get_maintenance_mode_info view returning structured MaintenanceModeRecord",
+          "Added get_maintenance_mode_schema_version view for upgrade safety",
+          "Added MaintenanceModeSchemaVersion upgrade-safe storage key written on init",
+          "Added MaintenanceModeInfo DataKey for structured storage (backward-compatible with legacy bool)"
         ]
       }
     ]
@@ -744,6 +750,36 @@
         "authorization": "any",
         "pausable": false,
         "gas_estimate": "low"
+      },
+      {
+        "name": "set_maintenance_mode",
+        "description": "Enable or disable maintenance mode (admin only). When enabled, ALL operations (lock, release, refund) are blocked. Accepts optional reason stored on-chain. Emits MaintenanceModeChanged.",
+        "parameters": [
+          {"name": "enabled", "type": "bool", "description": "true to enable, false to disable"},
+          {"name": "reason", "type": "Option<String>", "description": "Optional human-readable reason", "optional": true}
+        ],
+        "returns": {"type": "()", "description": "Empty on success"},
+        "authorization": "admin",
+        "pausable": false,
+        "gas_estimate": "low"
+      },
+      {
+        "name": "get_maintenance_mode_info",
+        "description": "Return the structured MaintenanceModeRecord with enabled flag, reason, timestamp, and admin.",
+        "parameters": [],
+        "returns": {"type": "MaintenanceModeRecord", "description": "Structured maintenance mode record"},
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "low"
+      },
+      {
+        "name": "get_maintenance_mode_schema_version",
+        "description": "Return the maintenance-mode storage schema version written during init. Returns 0 on legacy deployments.",
+        "parameters": [],
+        "returns": {"type": "u32", "description": "Schema version (1 = current; 0 = legacy pre-v2.5)"},
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "low"
       }
     ]
   },
@@ -863,6 +899,18 @@
         "type": "instance",
         "description": "Pending two-step admin rotation proposal. Present only when a rotation is in progress.",
         "data_structure": "PendingAdminRotation"
+      },
+      {
+        "name": "MaintenanceModeInfo",
+        "type": "instance",
+        "description": "Structured maintenance mode record with enabled flag, reason, timestamp, and admin. Upgrade-safe replacement for bare bool.",
+        "data_structure": "MaintenanceModeRecord"
+      },
+      {
+        "name": "MaintenanceModeSchemaVersion",
+        "type": "instance",
+        "description": "Upgrade-safe version marker for maintenance mode storage layout.",
+        "data_structure": "u32"
       },
       {
         "name": "ReentrancyGuard",
