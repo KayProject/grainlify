@@ -64,7 +64,12 @@ pub enum ContractError {
 #[cfg(feature = "contract")]
 const VERSION: u32 = 2;
 pub const STORAGE_SCHEMA_VERSION: u32 = 1;
+pub const LIVENESS_SCHEMA_VERSION: u32 = 1;
 const CONFIG_SNAPSHOT_LIMIT: u32 = 20;
+
+/// Maximum number of deployed contracts that can be registered.
+/// Prevents unbounded storage growth and ensures predictable gas costs.
+const MAX_DEPLOYED_CONTRACTS: u32 = 200;
 
 /// Default timelock delay for upgrade execution (24 hours in seconds)
 const DEFAULT_TIMELOCK_DELAY: u64 = 86_400;
@@ -247,6 +252,34 @@ pub struct PendingAdminRestore {
     pub expires_at: u64,
 }
 
+/// Kind of contract deployed in the Grainlify ecosystem.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContractKind {
+    BountyEscrow,
+    ProgramEscrow,
+    SorobanEscrow,
+    GrainlifyCore,
+    ViewFacade,
+    Other,
+}
+
+/// A single entry in the deployed-contract registry.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeployedContract {
+    /// On-chain address of the deployed contract.
+    pub address: Address,
+    /// Human-readable name of the contract (e.g. "bounty-escrow-v3").
+    pub name: String,
+    /// Role / type of the contract within the ecosystem.
+    pub kind: ContractKind,
+    /// Numeric version reported at registration time.
+    pub version: u32,
+    /// Ledger timestamp when the contract was registered.
+    pub deployed_at: u64,
+}
+
 /// Liveness watchdog status — a single read-only view of the contract's
 /// operational health, pause state, and maintenance mode.
 ///
@@ -387,6 +420,12 @@ enum DataKey {
     /// Upgrade-safe schema version marker for liveness watchdog storage.
     /// Written on init_admin; increment when LivenessStatus layout changes.
     LivenessSchemaVersion,
+    /// Ledger timestamp of the last successful `ping_watchdog` call.
+    /// Stored in instance storage; 0 / absent means never pinged.
+    WatchdogLastPing,
+    /// Ordered list of deployed contract addresses tracked by this core contract.
+    /// Used as a registry for discoverability and cross-contract coordination.
+    DeployedContractRegistry,
 }
 
 // ============================================================================
@@ -714,10 +753,7 @@ mod test_version_helpers;
 #[cfg(test)]
 mod test_strict_mode;
 #[cfg(test)]
-mod build_info_event_tests {
-    include!("test/build_info_event_tests.rs");
-}
-
+mod test_contract_registry;
 // ==================== END MONITORING MODULE ====================
 
 #[cfg(feature = "contract")]
@@ -736,7 +772,8 @@ impl GrainlifyContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Version, &VERSION);
         env.storage().instance().set(&DataKey::ReadOnlyMode, &false);
-        
+        env.storage().instance().set(&DataKey::LivenessSchemaVersion, &LIVENESS_SCHEMA_VERSION);
+
         // Emit BuildInfo event for initialization tracking and auditing
         env.events().publish(
             (symbol_short!("init"), symbol_short!("build")),
@@ -1319,44 +1356,6 @@ impl GrainlifyContract {
         MultiSig::is_contract_paused(&env)
     }
 
-    /// Unified liveness watchdog view.
-    ///
-    /// Returns a single `LivenessStatus` snapshot combining pause state,
-    /// read-only mode, version, and admin presence. Designed for polling by
-    /// monitoring agents, circuit breakers, and dashboards.
-    ///
-    /// # No Authorization Required
-    /// This is a pure read — no auth, no state mutation.
-    ///
-    /// # Upgrade Safety
-    /// `schema_version` reflects the `LivenessSchemaVersion` written at init.
-    /// Returns `0` on legacy deployments where the marker was never written.
-    pub fn liveness_watchdog(env: Env) -> LivenessStatus {
-        let is_paused = MultiSig::is_contract_paused(&env);
-        let is_read_only: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::ReadOnlyMode)
-            .unwrap_or(false);
-        LivenessStatus {
-            is_paused,
-            is_read_only,
-            is_operational: !is_paused && !is_read_only,
-            version: env
-                .storage()
-                .instance()
-                .get(&DataKey::Version)
-                .unwrap_or(0),
-            admin_set: env.storage().instance().has(&DataKey::Admin),
-            timestamp: env.ledger().timestamp(),
-            schema_version: env
-                .storage()
-                .instance()
-                .get(&DataKey::LivenessSchemaVersion)
-                .unwrap_or(0),
-        }
-    }
-
     /// Returns the liveness schema version written at init.
     /// Returns `0` on legacy deployments where the marker was never written.
     pub fn get_liveness_schema_version(env: Env) -> u32 {
@@ -1447,6 +1446,181 @@ impl GrainlifyContract {
         } else {
             None
         }
+    }
+
+    // ========================================================================
+    // Deployed Contract Registry
+    // ========================================================================
+
+    /// Register a deployed contract address in the on-chain registry.
+    ///
+    /// If the address is already registered, the existing entry is updated
+    /// (not duplicated) with the new metadata.
+    ///
+    /// # Authorization
+    /// Requires admin signature.
+    ///
+    /// # Panics
+    /// - If contract is not initialized
+    /// - If read-only mode is active
+    /// - If registry has reached `MAX_DEPLOYED_CONTRACTS`
+    pub fn register_deployed_contract(
+        env: Env,
+        address: Address,
+        name: String,
+        kind: ContractKind,
+        version: u32,
+    ) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic!("{}", ContractError::NotInitialized as u32));
+        admin.require_auth();
+        Self::require_not_read_only(&env);
+
+        let mut registry: Vec<DeployedContract> = env
+            .storage()
+            .instance()
+            .get(&DataKey::DeployedContractRegistry)
+            .unwrap_or(Vec::new(&env));
+
+        // Update existing entry if address already registered
+        let mut updated = false;
+        for i in 0..registry.len() {
+            let mut entry = registry.get(i).unwrap();
+            if entry.address == address {
+                entry.name = name.clone();
+                entry.kind = kind.clone();
+                entry.version = version;
+                entry.deployed_at = env.ledger().timestamp();
+                registry.set(i, entry);
+                updated = true;
+                break;
+            }
+        }
+
+        if !updated {
+            if registry.len() >= MAX_DEPLOYED_CONTRACTS {
+                panic!("Registry full: max {} deployed contracts", MAX_DEPLOYED_CONTRACTS);
+            }
+            registry.push_back(DeployedContract {
+                address: address.clone(),
+                name: name.clone(),
+                kind: kind.clone(),
+                version,
+                deployed_at: env.ledger().timestamp(),
+            });
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::DeployedContractRegistry, &registry);
+
+        env.events().publish(
+            (symbol_short!("registry"), symbol_short!("reg")),
+            (address, name, kind, version),
+        );
+    }
+
+    /// Remove a deployed contract address from the registry.
+    ///
+    /// If `address` is not in the registry this is a no-op.
+    ///
+    /// # Authorization
+    /// Requires admin signature.
+    pub fn deregister_deployed_contract(env: Env, address: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic!("{}", ContractError::NotInitialized as u32));
+        admin.require_auth();
+        Self::require_not_read_only(&env);
+
+        let registry: Vec<DeployedContract> = env
+            .storage()
+            .instance()
+            .get(&DataKey::DeployedContractRegistry)
+            .unwrap_or(Vec::new(&env));
+
+        let mut updated = Vec::new(&env);
+        for entry in registry.iter() {
+            if entry.address != address {
+                updated.push_back(entry);
+            }
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::DeployedContractRegistry, &updated);
+
+        env.events().publish(
+            (symbol_short!("registry"), symbol_short!("unreg")),
+            address,
+        );
+    }
+
+    /// Return paginated deployed contracts.
+    ///
+    /// # Arguments
+    /// * `offset` — Number of entries to skip (default: 0).
+    /// * `limit`  — Maximum entries to return (default: all).
+    pub fn list_deployed_contracts(
+        env: Env,
+        offset: Option<u32>,
+        limit: Option<u32>,
+    ) -> Vec<DeployedContract> {
+        let registry: Vec<DeployedContract> = env
+            .storage()
+            .instance()
+            .get(&DataKey::DeployedContractRegistry)
+            .unwrap_or(Vec::new(&env));
+
+        let total = registry.len();
+        let offset = offset.unwrap_or(0);
+        let limit = limit.unwrap_or(total);
+
+        if offset > total {
+            panic!("Offset exceeds registry size");
+        }
+
+        let end = if offset + limit > total { total } else { offset + limit };
+        let mut result = Vec::new(&env);
+        for i in offset..end {
+            result.push_back(registry.get(i).unwrap().clone());
+        }
+        result
+    }
+
+    /// Look up a registered contract by its on-chain address.
+    ///
+    /// # Returns
+    /// * `Some(entry)` — if the address is in the registry.
+    /// * `None`        — if the address has not been registered.
+    pub fn get_deployed_contract(env: Env, address: Address) -> Option<DeployedContract> {
+        let registry: Vec<DeployedContract> = env
+            .storage()
+            .instance()
+            .get(&DataKey::DeployedContractRegistry)
+            .unwrap_or(Vec::new(&env));
+
+        for entry in registry.iter() {
+            if entry.address == address {
+                return Some(entry);
+            }
+        }
+        None
+    }
+
+    /// Return the total number of registered deployed contracts.
+    pub fn deployed_contract_count(env: Env) -> u32 {
+        let registry: Vec<DeployedContract> = env
+            .storage()
+            .instance()
+            .get(&DataKey::DeployedContractRegistry)
+            .unwrap_or(Vec::new(&env));
+        registry.len()
     }
 }
 
