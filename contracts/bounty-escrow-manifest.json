@@ -3,7 +3,7 @@
   "contract_name": "BountyEscrowContract",
   "contract_purpose": "Manages bounty escrow with multi-token support, capability-based authorization, two-step admin rotation with timelock, refund-eligibility views, fee configuration, and comprehensive security features including reentrancy protection and rate limiting",
   "version": {
-    "current": "2.1.1",
+    "current": "2.4.0",
     "schema": "1.0.0",
     "history": [
       {
@@ -54,6 +54,21 @@
           "Added InvalidBatchSizeCap error code for batch size governance",
           "Added BatchSizeCaps and FeeRoutingSchemaVersion DataKey variants for upgrade-safe storage",
           "Fee routing invariant is now enforced on-chain: last destination absorbs rounding remainder ensuring exact accounting"
+        ]
+      },
+      {
+        "version": "2.4.0",
+        "release_date": "2026-04-24",
+        "changes": [
+          "Implemented high-value release timelock queue with clear semantics",
+          "release_funds now queues releases to DataKey::QueuedRelease(bounty_id) when amount >= configured threshold instead of transferring immediately",
+          "Added execute_queued_release: permissionless execution after timelock elapses, performs actual token transfer and marks escrow Released",
+          "Added cancel_queued_release: admin-only cancellation that removes queue entry and leaves escrow Locked",
+          "Added TimelockNotElapsed (53) and ReleaseAlreadyQueued (54) error codes",
+          "Added HighValueConfig and QueuedRelease DataKey variants for upgrade-safe storage",
+          "Added ReleaseQueueCancelled audit event emitted on cancel_queued_release",
+          "set_high_value_config now uses DataKey::HighValueConfig for upgrade-safe storage",
+          "All queue operations follow CEI ordering: state mutations before token transfers"
         ]
       }
     ]
@@ -602,6 +617,32 @@
         "authorization": "any",
         "pausable": false,
         "gas_estimate": "low"
+      },
+      {
+        "name": "get_high_value_config",
+        "description": "Get the current high-value release timelock configuration",
+        "parameters": [],
+        "returns": {
+          "type": "Option<HighValueConfig>",
+          "description": "Threshold and duration, or None if not configured"
+        },
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "low"
+      },
+      {
+        "name": "get_queued_release",
+        "description": "Get the pending queued release for a bounty, if any",
+        "parameters": [
+          { "name": "bounty_id", "type": "u64", "description": "Bounty identifier" }
+        ],
+        "returns": {
+          "type": "Option<QueuedRelease>",
+          "description": "Queued release record or None"
+        },
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "low"
       }
     ],
     "admin": [
@@ -876,6 +917,28 @@
         "authorization": "admin",
         "pausable": false,
         "gas_estimate": "low"
+      },
+      {
+        "name": "execute_queued_release",
+        "description": "Execute a queued high-value release after the timelock has elapsed. Permissionless — anyone may call once executable_at is reached.",
+        "parameters": [
+          { "name": "bounty_id", "type": "u64", "description": "Bounty identifier" }
+        ],
+        "returns": { "type": "()", "description": "Empty on success" },
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "medium"
+      },
+      {
+        "name": "cancel_queued_release",
+        "description": "Cancel a pending queued release (admin only). Escrow remains Locked.",
+        "parameters": [
+          { "name": "bounty_id", "type": "u64", "description": "Bounty identifier" }
+        ],
+        "returns": { "type": "()", "description": "Empty on success" },
+        "authorization": "admin",
+        "pausable": false,
+        "gas_estimate": "low"
       }
     ]
   },
@@ -1049,6 +1112,18 @@
         "type": "instance",
         "description": "Paginated index of blocklisted addresses",
         "data_structure": "Vec<Address>"
+      },
+      {
+        "name": "HighValueConfig",
+        "type": "instance",
+        "description": "High-value release timelock configuration (threshold and duration)",
+        "data_structure": "HighValueConfig"
+      },
+      {
+        "name": "QueuedRelease",
+        "type": "persistent",
+        "description": "Per-bounty queued release record for high-value timelock, keyed by bounty_id",
+        "data_structure": "QueuedRelease"
       }
     ]
   },
@@ -1441,6 +1516,56 @@
           }
         ],
         "trigger": "Admin toggles maintenance mode (state change only)"
+      },
+      {
+        "name": "ReleaseQueued",
+        "description": "High-value release queued for timelock delay",
+        "data": [
+          { "name": "version", "type": "u32", "description": "Always EVENT_VERSION_V2" },
+          { "name": "bounty_id", "type": "u64", "description": "Bounty identifier" },
+          { "name": "contributor", "type": "Address", "description": "Intended recipient" },
+          { "name": "amount", "type": "i128", "description": "Amount to be released" },
+          { "name": "executable_at", "type": "u64", "description": "Timestamp after which execute_queued_release may be called" },
+          { "name": "timestamp", "type": "u64", "description": "Ledger timestamp of queuing" }
+        ],
+        "trigger": "release_funds called when amount >= high-value threshold"
+      },
+      {
+        "name": "QueuedReleaseExecuted",
+        "description": "Queued high-value release executed after timelock elapsed",
+        "data": [
+          { "name": "version", "type": "u32", "description": "Always EVENT_VERSION_V2" },
+          { "name": "bounty_id", "type": "u64", "description": "Bounty identifier" },
+          { "name": "contributor", "type": "Address", "description": "Recipient of funds" },
+          { "name": "amount", "type": "i128", "description": "Amount transferred" },
+          { "name": "timestamp", "type": "u64", "description": "Ledger timestamp of execution" }
+        ],
+        "trigger": "execute_queued_release called after executable_at"
+      },
+      {
+        "name": "ReleaseQueueCancelled",
+        "description": "Admin cancelled a pending queued release",
+        "data": [
+          { "name": "version", "type": "u32", "description": "Always EVENT_VERSION_V2" },
+          { "name": "bounty_id", "type": "u64", "description": "Bounty identifier" },
+          { "name": "contributor", "type": "Address", "description": "Intended recipient that was cancelled" },
+          { "name": "amount", "type": "i128", "description": "Amount that was queued" },
+          { "name": "admin", "type": "Address", "description": "Admin who cancelled" },
+          { "name": "timestamp", "type": "u64", "description": "Ledger timestamp of cancellation" }
+        ],
+        "trigger": "cancel_queued_release called by admin"
+      },
+      {
+        "name": "HighValueConfigUpdated",
+        "description": "High-value release timelock configuration updated",
+        "data": [
+          { "name": "version", "type": "u32", "description": "Always EVENT_VERSION_V2" },
+          { "name": "admin", "type": "Address", "description": "Admin who updated the config" },
+          { "name": "threshold", "type": "i128", "description": "New threshold amount" },
+          { "name": "duration", "type": "u64", "description": "New timelock duration in seconds" },
+          { "name": "timestamp", "type": "u64", "description": "Ledger timestamp" }
+        ],
+        "trigger": "set_high_value_config called by admin"
       }
     ]
   },

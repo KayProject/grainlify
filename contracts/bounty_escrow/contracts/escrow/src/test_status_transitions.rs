@@ -955,3 +955,227 @@ fn test_claim_window_expired_event_emitted_on_failure() {
     });
     assert!(found, "ClaimWindowExpired event not emitted");
 }
+
+// ============================================================================
+// HIGH-VALUE RELEASE TIMELOCK QUEUE TESTS
+// ============================================================================
+
+#[test]
+fn test_high_value_release_queues_instead_of_immediate_transfer() {
+    let setup = TestSetup::new();
+    let bounty_id = 400_u64;
+    let amount = 10_000_i128;
+    let threshold = 5_000_i128;
+    let delay = 3_600_u64;
+    let deadline = setup.env.ledger().timestamp() + 100_000;
+
+    setup.escrow.lock_funds(&setup.depositor, &bounty_id, &amount, &deadline);
+    setup.escrow.set_high_value_config(&threshold, &delay);
+
+    // release_funds should queue, not transfer immediately
+    setup.escrow.release_funds(&bounty_id, &setup.contributor);
+
+    // Escrow should still be Locked (not Released yet)
+    let escrow = setup.escrow.get_escrow_info(&bounty_id).unwrap();
+    assert_eq!(escrow.status, EscrowStatus::Locked);
+
+    // Queue entry should exist
+    let queued = setup.escrow.get_queued_release(&bounty_id);
+    assert!(queued.is_some());
+    let q = queued.unwrap();
+    assert_eq!(q.contributor, setup.contributor);
+    assert_eq!(q.amount, amount);
+    assert_eq!(q.executable_at, setup.env.ledger().timestamp() + delay);
+}
+
+#[test]
+fn test_execute_queued_release_before_timelock_fails() {
+    let setup = TestSetup::new();
+    let bounty_id = 401_u64;
+    let amount = 10_000_i128;
+    let threshold = 5_000_i128;
+    let delay = 3_600_u64;
+    let deadline = setup.env.ledger().timestamp() + 100_000;
+
+    setup.escrow.lock_funds(&setup.depositor, &bounty_id, &amount, &deadline);
+    setup.escrow.set_high_value_config(&threshold, &delay);
+    setup.escrow.release_funds(&bounty_id, &setup.contributor);
+
+    // Try to execute before timelock elapses
+    let res = setup.escrow.try_execute_queued_release(&bounty_id);
+    assert!(matches!(res, Err(Ok(crate::Error::TimelockNotElapsed))));
+}
+
+#[test]
+fn test_execute_queued_release_after_timelock_succeeds() {
+    let setup = TestSetup::new();
+    let bounty_id = 402_u64;
+    let amount = 10_000_i128;
+    let threshold = 5_000_i128;
+    let delay = 3_600_u64;
+    let now = setup.env.ledger().timestamp();
+    let deadline = now + 100_000;
+
+    setup.escrow.lock_funds(&setup.depositor, &bounty_id, &amount, &deadline);
+    setup.escrow.set_high_value_config(&threshold, &delay);
+    setup.escrow.release_funds(&bounty_id, &setup.contributor);
+
+    // Advance time past the timelock
+    setup.env.ledger().set_timestamp(now + delay + 1);
+
+    setup.escrow.execute_queued_release(&bounty_id);
+
+    // Queue entry should be gone
+    assert!(setup.escrow.get_queued_release(&bounty_id).is_none());
+
+    // Escrow should now be Released
+    let escrow = setup.escrow.get_escrow_info(&bounty_id).unwrap();
+    assert_eq!(escrow.status, EscrowStatus::Released);
+}
+
+#[test]
+fn test_execute_queued_release_double_execute_fails() {
+    let setup = TestSetup::new();
+    let bounty_id = 403_u64;
+    let amount = 10_000_i128;
+    let threshold = 5_000_i128;
+    let delay = 3_600_u64;
+    let now = setup.env.ledger().timestamp();
+    let deadline = now + 100_000;
+
+    setup.escrow.lock_funds(&setup.depositor, &bounty_id, &amount, &deadline);
+    setup.escrow.set_high_value_config(&threshold, &delay);
+    setup.escrow.release_funds(&bounty_id, &setup.contributor);
+    setup.env.ledger().set_timestamp(now + delay + 1);
+    setup.escrow.execute_queued_release(&bounty_id);
+
+    // Second execute should fail — queue entry is gone
+    let res = setup.escrow.try_execute_queued_release(&bounty_id);
+    assert!(matches!(res, Err(Ok(crate::Error::BountyNotFound))));
+}
+
+#[test]
+fn test_release_already_queued_error_on_duplicate_queue() {
+    let setup = TestSetup::new();
+    let bounty_id = 404_u64;
+    let amount = 10_000_i128;
+    let threshold = 5_000_i128;
+    let delay = 3_600_u64;
+    let deadline = setup.env.ledger().timestamp() + 100_000;
+
+    setup.escrow.lock_funds(&setup.depositor, &bounty_id, &amount, &deadline);
+    setup.escrow.set_high_value_config(&threshold, &delay);
+    setup.escrow.release_funds(&bounty_id, &setup.contributor);
+
+    // Second release_funds call should fail with ReleaseAlreadyQueued
+    let res = setup.escrow.try_release_funds(&bounty_id, &setup.contributor);
+    assert!(matches!(res, Err(Ok(crate::Error::ReleaseAlreadyQueued))));
+}
+
+#[test]
+fn test_cancel_queued_release_restores_locked_state() {
+    let setup = TestSetup::new();
+    let bounty_id = 405_u64;
+    let amount = 10_000_i128;
+    let threshold = 5_000_i128;
+    let delay = 3_600_u64;
+    let deadline = setup.env.ledger().timestamp() + 100_000;
+
+    setup.escrow.lock_funds(&setup.depositor, &bounty_id, &amount, &deadline);
+    setup.escrow.set_high_value_config(&threshold, &delay);
+    setup.escrow.release_funds(&bounty_id, &setup.contributor);
+
+    // Cancel the queued release
+    setup.escrow.cancel_queued_release(&bounty_id);
+
+    // Queue entry should be gone
+    assert!(setup.escrow.get_queued_release(&bounty_id).is_none());
+
+    // Escrow should still be Locked
+    let escrow = setup.escrow.get_escrow_info(&bounty_id).unwrap();
+    assert_eq!(escrow.status, EscrowStatus::Locked);
+}
+
+#[test]
+fn test_below_threshold_release_is_immediate() {
+    let setup = TestSetup::new();
+    let bounty_id = 406_u64;
+    let amount = 1_000_i128; // below threshold
+    let threshold = 5_000_i128;
+    let delay = 3_600_u64;
+    let deadline = setup.env.ledger().timestamp() + 100_000;
+
+    setup.escrow.lock_funds(&setup.depositor, &bounty_id, &amount, &deadline);
+    setup.escrow.set_high_value_config(&threshold, &delay);
+
+    // release_funds should complete immediately (amount < threshold)
+    setup.escrow.release_funds(&bounty_id, &setup.contributor);
+
+    // No queue entry
+    assert!(setup.escrow.get_queued_release(&bounty_id).is_none());
+
+    // Escrow should be Released
+    let escrow = setup.escrow.get_escrow_info(&bounty_id).unwrap();
+    assert_eq!(escrow.status, EscrowStatus::Released);
+}
+
+#[test]
+fn test_high_value_config_event_emitted() {
+    let setup = TestSetup::new();
+    setup.escrow.set_high_value_config(&5_000, &3_600);
+
+    let events = setup.env.events().all();
+    let found = events.iter().any(|(_, topics, _)| {
+        topics.len() >= 1
+            && topics
+                .get(0)
+                .map(|t| t == soroban_sdk::Symbol::new(&setup.env, "hv_cfg").into_val(&setup.env))
+                .unwrap_or(false)
+    });
+    assert!(found, "HighValueConfigUpdated event not emitted");
+}
+
+#[test]
+fn test_release_queued_event_emitted() {
+    let setup = TestSetup::new();
+    let bounty_id = 407_u64;
+    let amount = 10_000_i128;
+    let deadline = setup.env.ledger().timestamp() + 100_000;
+
+    setup.escrow.lock_funds(&setup.depositor, &bounty_id, &amount, &deadline);
+    setup.escrow.set_high_value_config(&5_000, &3_600);
+    setup.escrow.release_funds(&bounty_id, &setup.contributor);
+
+    let events = setup.env.events().all();
+    let found = events.iter().any(|(_, topics, _)| {
+        topics.len() >= 1
+            && topics
+                .get(0)
+                .map(|t| t == soroban_sdk::Symbol::new(&setup.env, "hv_q").into_val(&setup.env))
+                .unwrap_or(false)
+    });
+    assert!(found, "ReleaseQueued event not emitted");
+}
+
+#[test]
+fn test_cancel_queued_release_event_emitted() {
+    let setup = TestSetup::new();
+    let bounty_id = 408_u64;
+    let amount = 10_000_i128;
+    let deadline = setup.env.ledger().timestamp() + 100_000;
+
+    setup.escrow.lock_funds(&setup.depositor, &bounty_id, &amount, &deadline);
+    setup.escrow.set_high_value_config(&5_000, &3_600);
+    setup.escrow.release_funds(&bounty_id, &setup.contributor);
+    setup.escrow.cancel_queued_release(&bounty_id);
+
+    let events = setup.env.events().all();
+    let found = events.iter().any(|(_, topics, _)| {
+        topics.len() >= 1
+            && topics
+                .get(0)
+                .map(|t| t == soroban_sdk::Symbol::new(&setup.env, "hv_cncl").into_val(&setup.env))
+                .unwrap_or(false)
+    });
+    assert!(found, "ReleaseQueueCancelled event not emitted");
+}
