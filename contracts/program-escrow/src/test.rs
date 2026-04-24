@@ -3039,3 +3039,120 @@ fn test_pause_reason_cleared_on_full_unpause() {
     let flags = client.get_pause_flags();
     assert_eq!(flags.pause_reason, None, "reason must be cleared when fully unpaused");
 }
+
+// ============================================================================
+// MERKLE ROOT RECEIPT TESTS
+// ============================================================================
+
+/// MR-1: batch_payout stores a receipt with a non-zero Merkle root.
+#[test]
+fn test_batch_payout_stores_receipt() {
+    let env = Env::default();
+    let (client, _admin, _token, token_admin) = setup_program(&env, 0);
+
+    token_admin.mint(&client.address, &3000);
+    client.lock_program_funds(&3000);
+
+    let r1 = Address::generate(&env);
+    let r2 = Address::generate(&env);
+    let recipients = vec![&env, r1.clone(), r2.clone()];
+    let amounts = vec![&env, 1000i128, 2000i128];
+
+    client.batch_payout(&recipients, &amounts);
+
+    let receipt = client.get_batch_receipt(&0).expect("receipt must exist");
+    assert_eq!(receipt.receipt_id, 0);
+    assert_eq!(receipt.recipient_count, 2);
+    assert_eq!(receipt.total_amount, 3000);
+    // Merkle root must be non-zero
+    let zero = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+    assert_ne!(receipt.merkle_root, zero);
+}
+
+/// MR-2: Two identical batches produce the same Merkle root (deterministic).
+#[test]
+fn test_batch_payout_merkle_root_deterministic() {
+    let env = Env::default();
+    let (client, _admin, _token, token_admin) = setup_program(&env, 0);
+
+    token_admin.mint(&client.address, &6000);
+    client.lock_program_funds(&6000);
+
+    let r1 = Address::generate(&env);
+    let r2 = Address::generate(&env);
+    let recipients = vec![&env, r1.clone(), r2.clone()];
+    let amounts = vec![&env, 1000i128, 2000i128];
+
+    client.batch_payout(&recipients, &amounts);
+    client.batch_payout(&recipients, &amounts);
+
+    let receipt0 = client.get_batch_receipt(&0).unwrap();
+    let receipt1 = client.get_batch_receipt(&1).unwrap();
+    assert_eq!(receipt0.merkle_root, receipt1.merkle_root);
+}
+
+/// MR-3: Different batches produce different Merkle roots.
+#[test]
+fn test_batch_payout_different_batches_different_roots() {
+    let env = Env::default();
+    let (client, _admin, _token, token_admin) = setup_program(&env, 0);
+
+    token_admin.mint(&client.address, &6000);
+    client.lock_program_funds(&6000);
+
+    let r1 = Address::generate(&env);
+    let r2 = Address::generate(&env);
+
+    client.batch_payout(&vec![&env, r1.clone()], &vec![&env, 1000i128]);
+    client.batch_payout(&vec![&env, r2.clone()], &vec![&env, 2000i128]);
+
+    let receipt0 = client.get_batch_receipt(&0).unwrap();
+    let receipt1 = client.get_batch_receipt(&1).unwrap();
+    assert_ne!(receipt0.merkle_root, receipt1.merkle_root);
+}
+
+/// MR-4: Receipt IDs are monotonically increasing.
+#[test]
+fn test_batch_payout_receipt_ids_monotonic() {
+    let env = Env::default();
+    let (client, _admin, _token, token_admin) = setup_program(&env, 0);
+
+    token_admin.mint(&client.address, &6000);
+    client.lock_program_funds(&6000);
+
+    let r = Address::generate(&env);
+    client.batch_payout(&vec![&env, r.clone()], &vec![&env, 1000i128]);
+    client.batch_payout(&vec![&env, r.clone()], &vec![&env, 1000i128]);
+    client.batch_payout(&vec![&env, r.clone()], &vec![&env, 1000i128]);
+
+    assert!(client.get_batch_receipt(&0).is_some());
+    assert!(client.get_batch_receipt(&1).is_some());
+    assert!(client.get_batch_receipt(&2).is_some());
+    assert!(client.get_batch_receipt(&3).is_none());
+}
+
+/// MR-5: get_batch_receipt returns None for a non-existent receipt.
+#[test]
+fn test_get_batch_receipt_not_found_returns_none() {
+    let env = Env::default();
+    let (client, _admin, _token, _token_admin) = setup_program(&env, 0);
+    assert!(client.get_batch_receipt(&999).is_none());
+}
+
+/// MR-6: Single-item batch produces a valid receipt (leaf == root).
+#[test]
+fn test_batch_payout_single_item_receipt() {
+    let env = Env::default();
+    let (client, _admin, _token, token_admin) = setup_program(&env, 0);
+
+    token_admin.mint(&client.address, &1000);
+    client.lock_program_funds(&1000);
+
+    let r = Address::generate(&env);
+    client.batch_payout(&vec![&env, r.clone()], &vec![&env, 1000i128]);
+
+    let receipt = client.get_batch_receipt(&0).unwrap();
+    assert_eq!(receipt.recipient_count, 1);
+    let zero = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+    assert_ne!(receipt.merkle_root, zero);
+}

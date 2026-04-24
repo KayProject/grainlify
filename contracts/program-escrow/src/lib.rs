@@ -140,9 +140,10 @@
 //! 6. **Token Approval**: Ensure contract has token allowance before locking funds
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env,
-    String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Bytes,
+    BytesN, Env, String, Symbol, Vec,
 };
+use soroban_sdk::xdr::ToXdr;
 
 // Event types
 const PROGRAM_INITIALIZED: Symbol = symbol_short!("PrgInit");
@@ -625,6 +626,47 @@ pub enum DataKey {
     /// Upgrade-safe schema version marker for pause flags storage.
     /// Written on init; increment when `PauseFlags` layout changes.
     PauseSchemaVersion,
+    /// Merkle root receipt for a completed batch payout.
+    /// Key: receipt_id (u64) → BatchReceipt
+    BatchReceipt(u64),
+}
+
+/// Immutable receipt stored on-chain after every successful `batch_payout`.
+///
+/// The `merkle_root` is a SHA-256 Merkle root over the ordered set of
+/// `(recipient_address, amount)` leaves, providing a compact, verifiable
+/// commitment to the full payout set without storing every individual record.
+///
+/// ### Upgrade safety
+/// Stored under `DataKey::BatchReceipt(receipt_id)` in persistent storage.
+/// The key is monotonically increasing and never reused.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchReceipt {
+    pub version: u32,
+    pub receipt_id: u64,
+    pub program_id: String,
+    /// SHA-256 Merkle root over ordered `(recipient, amount)` leaves.
+    pub merkle_root: soroban_sdk::BytesN<32>,
+    pub recipient_count: u32,
+    pub total_amount: i128,
+    pub timestamp: u64,
+}
+
+/// Audit event emitted after every successful `batch_payout`.
+///
+/// ### Topics
+/// `("batchrcpt", receipt_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchReceiptStored {
+    pub version: u32,
+    pub receipt_id: u64,
+    pub program_id: String,
+    pub merkle_root: soroban_sdk::BytesN<32>,
+    pub recipient_count: u32,
+    pub total_amount: i128,
+    pub timestamp: u64,
 }
 
 #[contracttype]
@@ -2645,6 +2687,54 @@ impl ProgramEscrowContract {
         Self::batch_payout_internal(env, Some(caller), recipients, amounts)
     }
 
+    /// Compute a deterministic Merkle root over a batch of `(recipient, amount)` pairs.
+    ///
+    /// Builds a binary Merkle tree from the ordered leaves. If the leaf count is odd,
+    /// the last leaf is duplicated to complete the tree level (standard Merkle padding).
+    ///
+    /// # Arguments
+    /// * `env` - Contract environment
+    /// * `recipients` - Ordered vector of recipient addresses
+    /// * `amounts` - Ordered vector of amounts (same length as recipients)
+    ///
+    /// # Returns
+    /// SHA-256 Merkle root as `BytesN<32>`
+    fn compute_batch_merkle_root(
+        env: &Env,
+        recipients: &Vec<Address>,
+        amounts: &Vec<i128>,
+    ) -> BytesN<32> {
+        let mut leaves: Vec<BytesN<32>> = Vec::new(env);
+        for i in 0..recipients.len() {
+            let recipient = recipients.get(i).unwrap();
+            let amount = amounts.get(i).unwrap();
+            let leaf_data = (recipient, amount).to_xdr(env);
+            let leaf_hash: BytesN<32> = env.crypto().sha256(&leaf_data).into();
+            leaves.push_back(leaf_hash);
+        }
+
+        // Build Merkle tree bottom-up
+        let mut level = leaves;
+        while level.len() > 1 {
+            let mut next_level: Vec<BytesN<32>> = Vec::new(env);
+            let mut i = 0;
+            while i < level.len() {
+                let left = level.get(i).unwrap();
+                let right = if i + 1 < level.len() {
+                    level.get(i + 1).unwrap()
+                } else {
+                    left.clone() // Duplicate last leaf if odd count
+                };
+                let combined = (left, right).to_xdr(env);
+                let parent: BytesN<32> = env.crypto().sha256(&combined).into();
+                next_level.push_back(parent);
+                i += 2;
+            }
+            level = next_level;
+        }
+        level.get(0).unwrap()
+    }
+
     fn batch_payout_internal(
         env: Env,
         caller: Option<Address>,
@@ -2801,6 +2891,42 @@ impl ProgramEscrowContract {
                 recipient_count: recipients.len() as u32,
                 total_amount: total_payout,
                 remaining_balance: updated_data.remaining_balance,
+            },
+        );
+
+        // Compute Merkle root and store receipt
+        let merkle_root = Self::compute_batch_merkle_root(&env, &recipients, &amounts);
+        let receipt_id: u64 = env
+            .storage()
+            .instance()
+            .get(&RECEIPT_ID)
+            .unwrap_or(0u64);
+        let receipt = BatchReceipt {
+            version: EVENT_VERSION_V2,
+            receipt_id,
+            program_id: updated_data.program_id.clone(),
+            merkle_root: merkle_root.clone(),
+            recipient_count: recipients.len() as u32,
+            total_amount: total_payout,
+            timestamp,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::BatchReceipt(receipt_id), &receipt);
+        env.storage()
+            .instance()
+            .set(&RECEIPT_ID, &receipt_id.checked_add(1).unwrap_or(0));
+
+        env.events().publish(
+            (symbol_short!("batchrcpt"), receipt_id),
+            BatchReceiptStored {
+                version: EVENT_VERSION_V2,
+                receipt_id,
+                program_id: updated_data.program_id.clone(),
+                merkle_root,
+                recipient_count: recipients.len() as u32,
+                total_amount: total_payout,
+                timestamp,
             },
         );
 
@@ -3381,6 +3507,16 @@ impl ProgramEscrowContract {
         amounts: soroban_sdk::Vec<i128>,
     ) -> ProgramData {
         Self::batch_payout(env, recipients, amounts)
+    }
+
+    /// Retrieve a stored batch payout receipt by its receipt ID.
+    ///
+    /// Returns `None` if no receipt exists for the given ID.
+    /// Receipts are stored in persistent storage and survive contract upgrades.
+    pub fn get_batch_receipt(env: Env, receipt_id: u64) -> Option<BatchReceipt> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::BatchReceipt(receipt_id))
     }
 
     // --- Payout Splits (Ratio-based) ---
