@@ -72,8 +72,16 @@
           "Pause checks remain deterministic: release_paused blocks single_payout and batch_payout; lock_paused blocks lock_program_funds; flags are orthogonal",
           "Added 16 targeted tests in test.rs covering pause invariants, V2 event fields, schema version, and edge cases"
         ]
-      }
-          "Deterministic error ordering preserved: threshold check runs before balance and circuit-breaker checks"
+      },
+      {
+        "version": "2.5.0",
+        "release_date": "2026-04-24",
+        "changes": [
+          "Added idempotency keys for payouts with deterministic behavior and explicit errors",
+          "IdempotencyKeyUsedEvent and IdempotencyKeyRetryEvent for audit trail",
+          "Upgrade-safe idempotency storage with schema version tracking",
+          "batch_payout and single_payout now accept optional idempotency_key parameter",
+          "get_idempotency_schema_version() view entrypoint for schema detection"
         ]
       }
     ]
@@ -192,7 +200,7 @@
       },
       {
         "name": "batch_payout",
-        "description": "Distribute prizes to multiple winners",
+        "description": "Distribute prizes to multiple winners with optional idempotency key for retry safety",
         "parameters": [
           {
             "name": "winners",
@@ -203,6 +211,12 @@
             "name": "amounts",
             "type": "Vec<i128>",
             "description": "Corresponding prize amounts"
+          },
+          {
+            "name": "idempotency_key",
+            "type": "Option<String>",
+            "description": "Optional idempotency key for deterministic retry behavior",
+            "optional": true
           }
         ],
         "returns": {
@@ -215,7 +229,7 @@
       },
       {
         "name": "single_payout",
-        "description": "Distribute prize to single winner",
+        "description": "Distribute prize to single winner with optional idempotency key for retry safety",
         "parameters": [
           {
             "name": "winner",
@@ -226,6 +240,12 @@
             "name": "amount",
             "type": "i128",
             "description": "Prize amount"
+          },
+          {
+            "name": "idempotency_key",
+            "type": "Option<String>",
+            "description": "Optional idempotency key for deterministic retry behavior",
+            "optional": true
           }
         ],
         "returns": {
@@ -483,6 +503,18 @@
         "returns": {
           "type": "u32",
           "description": "Schema version (1 = current; 0 = legacy pre-v2.3)"
+        },
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "low"
+      },
+      {
+        "name": "get_idempotency_schema_version",
+        "description": "Return the idempotency storage schema version written during init. Returns 0 on legacy deployments.",
+        "parameters": [],
+        "returns": {
+          "type": "u32",
+          "description": "Schema version (1 = current; 0 = legacy pre-v2.5)"
         },
         "authorization": "any",
         "pausable": false,
