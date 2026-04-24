@@ -380,29 +380,7 @@ mod anti_abuse {
         env.storage().instance().set(&AntiAbuseKey::Admin, &admin);
     }
 
-    fn get_admin(e: &Env) -> Address {
-    e.storage().instance().get(&DataKey::Admin).unwrap()
-}
 
-fn set_admin(e: &Env, admin: &Address) {
-    e.storage().instance().set(&DataKey::Admin, admin);
-}
-
-fn get_pending_admin(e: &Env) -> Option<Address> {
-    e.storage().instance().get(&DataKey::PendingAdmin)
-}
-
-fn set_pending_admin(e: &Env, admin: &Address) {
-    e.storage().instance().set(&DataKey::PendingAdmin, admin);
-}
-
-fn set_admin_transfer_time(e: &Env, ts: u64) {
-    e.storage().instance().set(&DataKey::AdminTransferTimestamp, &ts);
-}
-
-fn get_admin_transfer_time(e: &Env) -> Option<u64> {
-    e.storage().instance().get(&DataKey::AdminTransferTimestamp)
-}
 
 
     pub fn check_rate_limit(env: &Env, address: Address) {
@@ -909,6 +887,22 @@ pub enum DataKey {
     /// Upgrade-safe marker for participant list storage semantics.
     /// Increment when `WhitelistIndex` / `BlocklistIndex` layout changes.
     ParticipantListSchemaVersion,
+
+    // ── NEW entries required by issue #1011 and existing code ──────────
+    /// Pending admin address for two-step rotation
+    PendingAdmin,
+    /// Timestamp after which the pending admin may accept
+    AdminTimelock,
+    /// Configured timelock duration in seconds for admin rotations
+    TimelockDuration,
+    /// Timestamp when a legacy admin transfer was initiated
+    AdminTransferTimestamp,
+    /// High-value release timelock configuration (HighValueConfig struct)
+    HighValueConfig,
+    /// Pending queued high-value release for a given bounty
+    QueuedRelease(u64),
+    /// Per-bounty fee routing override (PerBountyFeeRouting struct)
+    PerBountyFeeRouting(u64),
 }
 
 #[contracttype]
@@ -1581,12 +1575,6 @@ impl BountyEscrowContract {
 
     /// Returns the effective runtime cap for `batch_lock_funds`.
     ///
-    /// Falls back to the compile-time `MAX_BATCH_SIZE` when no admin-configured
-    /// cap has been stored, ensuring the contract is safe out-of-the-box.
-    fn get_max_batch_size(env: Env) -> u32 {
-        Self::get_batch_size_caps_internal(&env).lock_cap
-    }
-
     /// Returns the effective runtime cap for `batch_release_funds`.
     fn get_max_release_batch_size(env: Env) -> u32 {
         Self::get_batch_size_caps_internal(&env).release_cap
