@@ -625,6 +625,10 @@ pub enum DataKey {
     /// Upgrade-safe schema version marker for pause flags storage.
     /// Written on init; increment when `PauseFlags` layout changes.
     PauseSchemaVersion,
+    /// Idempotency key for payout deduplication.
+    /// Stored in persistent storage so it survives contract upgrades.
+    /// Key: caller-supplied opaque string. Value: `true` (processed).
+    IdempotencyKey(String),
 }
 
 #[contracttype]
@@ -2633,7 +2637,7 @@ impl ProgramEscrowContract {
     /// - Protected by reentrancy guard.
     /// - Respects circuit breaker and threshold limits.
     pub fn batch_payout(env: Env, recipients: soroban_sdk::Vec<Address>, amounts: soroban_sdk::Vec<i128>) -> ProgramData {
-        Self::batch_payout_internal(env, None, recipients, amounts)
+        Self::batch_payout_internal(env, None, recipients, amounts, None)
     }
 
     pub fn batch_payout_by(
@@ -2642,7 +2646,21 @@ impl ProgramEscrowContract {
         recipients: soroban_sdk::Vec<Address>,
         amounts: soroban_sdk::Vec<i128>,
     ) -> ProgramData {
-        Self::batch_payout_internal(env, Some(caller), recipients, amounts)
+        Self::batch_payout_internal(env, Some(caller), recipients, amounts, None)
+    }
+
+    /// Execute batch payouts with an idempotency key.
+    ///
+    /// If `idempotency_key` has already been used for a successful payout,
+    /// the call panics with `"Payout already processed"` — callers should
+    /// treat this as a success (funds were already transferred).
+    pub fn batch_payout_idempotent(
+        env: Env,
+        idempotency_key: String,
+        recipients: soroban_sdk::Vec<Address>,
+        amounts: soroban_sdk::Vec<i128>,
+    ) -> ProgramData {
+        Self::batch_payout_internal(env, None, recipients, amounts, Some(idempotency_key))
     }
 
     fn batch_payout_internal(
@@ -2650,9 +2668,11 @@ impl ProgramEscrowContract {
         caller: Option<Address>,
         recipients: soroban_sdk::Vec<Address>,
         amounts: soroban_sdk::Vec<i128>,
+        idempotency_key: Option<String>,
     ) -> ProgramData {
         // Validation precedence (deterministic ordering):
         // 1. Reentrancy guard
+        // 1b. Idempotency check
         // 2. Contract initialized
         // 3. Paused (operational state)
         // 4. Authorization
@@ -2662,6 +2682,15 @@ impl ProgramEscrowContract {
         // 1. Reentrancy guard
         reentrancy_guard::check_not_entered(&env);
         reentrancy_guard::set_entered(&env);
+
+        // 1b. Idempotency check — runs before any state reads so duplicate
+        //     submissions are rejected cheaply and deterministically.
+        if let Some(ref key) = idempotency_key {
+            if env.storage().persistent().has(&DataKey::IdempotencyKey(key.clone())) {
+                reentrancy_guard::clear_entered(&env);
+                panic!("Payout already processed");
+            }
+        }
 
         // 2. Contract must be initialized
         let program_data: ProgramData =
@@ -2804,6 +2833,13 @@ impl ProgramEscrowContract {
             },
         );
 
+        // Store idempotency key after all transfers succeed (CEI ordering).
+        if let Some(key) = idempotency_key {
+            env.storage()
+                .persistent()
+                .set(&DataKey::IdempotencyKey(key), &true);
+        }
+
         // Clear reentrancy guard before returning
         reentrancy_guard::clear_entered(&env);
 
@@ -2824,7 +2860,7 @@ impl ProgramEscrowContract {
     /// - Protected by reentrancy guard.
     /// - Respects circuit breaker and threshold limits.
     pub fn single_payout(env: Env, recipient: Address, amount: i128) -> ProgramData {
-        Self::single_payout_internal(env, None, recipient, amount)
+        Self::single_payout_internal(env, None, recipient, amount, None)
     }
 
     pub fn single_payout_by(
@@ -2833,7 +2869,21 @@ impl ProgramEscrowContract {
         recipient: Address,
         amount: i128,
     ) -> ProgramData {
-        Self::single_payout_internal(env, Some(caller), recipient, amount)
+        Self::single_payout_internal(env, Some(caller), recipient, amount, None)
+    }
+
+    /// Execute a single payout with an idempotency key.
+    ///
+    /// If `idempotency_key` has already been used for a successful payout,
+    /// the call panics with `"Payout already processed"` — callers should
+    /// treat this as a success (funds were already transferred).
+    pub fn single_payout_idempotent(
+        env: Env,
+        idempotency_key: String,
+        recipient: Address,
+        amount: i128,
+    ) -> ProgramData {
+        Self::single_payout_internal(env, None, recipient, amount, Some(idempotency_key))
     }
 
     fn single_payout_internal(
@@ -2841,9 +2891,11 @@ impl ProgramEscrowContract {
         caller: Option<Address>,
         recipient: Address,
         amount: i128,
+        idempotency_key: Option<String>,
     ) -> ProgramData {
         // Validation precedence (deterministic ordering):
         // 1. Reentrancy guard
+        // 1b. Idempotency check
         // 2. Contract initialized
         // 3. Paused (operational state)
         // 4. Authorization
@@ -2853,6 +2905,15 @@ impl ProgramEscrowContract {
         // 1. Reentrancy guard
         reentrancy_guard::check_not_entered(&env);
         reentrancy_guard::set_entered(&env);
+
+        // 1b. Idempotency check — runs before any state reads so duplicate
+        //     submissions are rejected cheaply and deterministically.
+        if let Some(ref key) = idempotency_key {
+            if env.storage().persistent().has(&DataKey::IdempotencyKey(key.clone())) {
+                reentrancy_guard::clear_entered(&env);
+                panic!("Payout already processed");
+            }
+        }
 
         // 2. Contract must be initialized
         let program_data: ProgramData =
@@ -2968,6 +3029,13 @@ impl ProgramEscrowContract {
             },
         );
 
+        // Store idempotency key after all transfers succeed (CEI ordering).
+        if let Some(key) = idempotency_key {
+            env.storage()
+                .persistent()
+                .set(&DataKey::IdempotencyKey(key), &true);
+        }
+
         reentrancy_guard::clear_entered(&env);
 
         updated_data
@@ -2996,6 +3064,17 @@ impl ProgramEscrowContract {
             .unwrap_or_else(|| panic!("Program not initialized"));
 
         program_data.remaining_balance
+    }
+
+    /// Check whether an idempotency key has already been used for a payout.
+    ///
+    /// Returns `true` if the key was previously recorded by a successful
+    /// `single_payout_idempotent` or `batch_payout_idempotent` call.
+    /// Returns `false` if the key is unknown (safe to submit).
+    pub fn is_payout_processed(env: Env, idempotency_key: String) -> bool {
+        env.storage()
+            .persistent()
+            .has(&DataKey::IdempotencyKey(idempotency_key))
     }
 
     /// Create a release schedule entry that can be triggered at/after `release_timestamp`.

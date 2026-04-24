@@ -3,7 +3,7 @@
   "contract_name": "ProgramEscrowContract",
   "contract_purpose": "Handles hackathon and program prize pools with batch payouts, dependency management, circuit breaker protection, and comprehensive monitoring",
   "version": {
-    "current": "2.4.0",
+    "current": "2.5.0",
     "schema": "1.0.0",
     "history": [
       {
@@ -71,6 +71,21 @@
           "Added get_pause_schema_version() view entrypoint — returns 0 for legacy pre-v1 contracts",
           "Pause checks remain deterministic: release_paused blocks single_payout and batch_payout; lock_paused blocks lock_program_funds; flags are orthogonal",
           "Added 16 targeted tests in test.rs covering pause invariants, V2 event fields, schema version, and edge cases"
+        ]
+      },
+      {
+        "version": "2.5.0",
+        "release_date": "2026-04-24",
+        "changes": [
+          "Added idempotency key support for payout deduplication",
+          "Added single_payout_idempotent entrypoint — accepts opaque String key; panics with 'Payout already processed' on duplicate",
+          "Added batch_payout_idempotent entrypoint — same semantics for batch payouts",
+          "Added is_payout_processed view entrypoint — returns bool for any key",
+          "Added DataKey::IdempotencyKey(String) stored in persistent storage for upgrade-safe deduplication",
+          "Added ContractError::PayoutAlreadyProcessed (code 1100) to canonical error enum",
+          "Idempotency check runs before all state reads (deterministic, cheap rejection of duplicates)",
+          "Key is stored after all token transfers succeed (CEI ordering — no partial state on failure)",
+          "Added 10 targeted tests (IK-01 through IK-10) covering first-call success, duplicate rejection, key independence, lifecycle, batch variants, and balance invariants"
         ]
       }
           "Deterministic error ordering preserved: threshold check runs before balance and circuit-breaker checks"
@@ -235,6 +250,72 @@
         "authorization": "admin",
         "pausable": true,
         "gas_estimate": "medium"
+      },
+      {
+        "name": "single_payout_idempotent",
+        "description": "Distribute prize to single winner with idempotency key. Panics with 'Payout already processed' if the key was already used for a successful payout — callers should treat this as a success.",
+        "parameters": [
+          {
+            "name": "idempotency_key",
+            "type": "String",
+            "description": "Caller-supplied opaque string used to deduplicate payout submissions. Must be unique per logical payout."
+          },
+          {
+            "name": "recipient",
+            "type": "Address",
+            "description": "Winner address"
+          },
+          {
+            "name": "amount",
+            "type": "i128",
+            "description": "Prize amount"
+          }
+        ],
+        "returns": {
+          "type": "ProgramData",
+          "description": "Updated program data"
+        },
+        "authorization": "admin",
+        "pausable": true,
+        "gas_estimate": "medium",
+        "security_notes": [
+          "Idempotency check runs before all state reads — duplicate submissions are rejected cheaply.",
+          "Key is stored in persistent storage after all token transfers succeed (CEI ordering).",
+          "Persistent storage ensures keys survive contract upgrades."
+        ]
+      },
+      {
+        "name": "batch_payout_idempotent",
+        "description": "Distribute prizes to multiple winners with idempotency key. Panics with 'Payout already processed' if the key was already used for a successful batch payout.",
+        "parameters": [
+          {
+            "name": "idempotency_key",
+            "type": "String",
+            "description": "Caller-supplied opaque string used to deduplicate batch payout submissions."
+          },
+          {
+            "name": "recipients",
+            "type": "Vec<Address>",
+            "description": "Array of winner addresses"
+          },
+          {
+            "name": "amounts",
+            "type": "Vec<i128>",
+            "description": "Corresponding prize amounts"
+          }
+        ],
+        "returns": {
+          "type": "ProgramData",
+          "description": "Updated program data"
+        },
+        "authorization": "admin",
+        "pausable": true,
+        "gas_estimate": "high",
+        "security_notes": [
+          "Idempotency check runs before all state reads — duplicate submissions are rejected cheaply.",
+          "Key is stored in persistent storage after all token transfers succeed (CEI ordering).",
+          "Persistent storage ensures keys survive contract upgrades."
+        ]
       },
       {
         "name": "set_program_spend_threshold",
@@ -483,6 +564,24 @@
         "returns": {
           "type": "u32",
           "description": "Schema version (1 = current; 0 = legacy pre-v2.3)"
+        },
+        "authorization": "any",
+        "pausable": false,
+        "gas_estimate": "low"
+      },
+      {
+        "name": "is_payout_processed",
+        "description": "Check whether an idempotency key has already been used for a successful payout. Returns true if the key is recorded, false if unknown (safe to submit).",
+        "parameters": [
+          {
+            "name": "idempotency_key",
+            "type": "String",
+            "description": "The idempotency key to query"
+          }
+        ],
+        "returns": {
+          "type": "bool",
+          "description": "true if the key was used for a successful payout; false otherwise"
         },
         "authorization": "any",
         "pausable": false,
@@ -831,6 +930,12 @@
         "type": "instance",
         "description": "Release schedules",
         "data_structure": "Vec<ProgramReleaseSchedule>"
+      },
+      {
+        "name": "DataKey::IdempotencyKey(String)",
+        "type": "persistent",
+        "description": "Idempotency key for payout deduplication. Key is the caller-supplied opaque string; value is bool (true = processed). Stored in persistent storage so it survives contract upgrades.",
+        "data_structure": "bool"
       }
     ]
   },
@@ -927,6 +1032,12 @@
         "error_code": "DependencyCycle",
         "scenario": "Creating circular dependencies between programs",
         "resolution": "Remove circular dependency references"
+      },
+      {
+        "error_code": "PayoutAlreadyProcessed",
+        "numeric_code": 1100,
+        "scenario": "Submitting a payout with an idempotency key that was already used for a successful payout",
+        "resolution": "Treat as success — the funds were already transferred. Use is_payout_processed to query key status before retrying."
       }
     ],
     "gas_considerations": [
