@@ -140,9 +140,10 @@
 //! 6. **Token Approval**: Ensure contract has token allowance before locking funds
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Env,
-    String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, Bytes,
+    BytesN, Env, String, Symbol, Vec,
 };
+use soroban_sdk::xdr::ToXdr;
 
 // Event types
 const PROGRAM_INITIALIZED: Symbol = symbol_short!("PrgInit");
@@ -3641,6 +3642,54 @@ impl ProgramEscrowContract {
         Self::batch_payout_internal(env, Some(caller), recipients, amounts, idempotency_key)
     }
 
+    /// Compute a deterministic Merkle root over a batch of `(recipient, amount)` pairs.
+    ///
+    /// Builds a binary Merkle tree from the ordered leaves. If the leaf count is odd,
+    /// the last leaf is duplicated to complete the tree level (standard Merkle padding).
+    ///
+    /// # Arguments
+    /// * `env` - Contract environment
+    /// * `recipients` - Ordered vector of recipient addresses
+    /// * `amounts` - Ordered vector of amounts (same length as recipients)
+    ///
+    /// # Returns
+    /// SHA-256 Merkle root as `BytesN<32>`
+    fn compute_batch_merkle_root(
+        env: &Env,
+        recipients: &Vec<Address>,
+        amounts: &Vec<i128>,
+    ) -> BytesN<32> {
+        let mut leaves: Vec<BytesN<32>> = Vec::new(env);
+        for i in 0..recipients.len() {
+            let recipient = recipients.get(i).unwrap();
+            let amount = amounts.get(i).unwrap();
+            let leaf_data = (recipient, amount).to_xdr(env);
+            let leaf_hash: BytesN<32> = env.crypto().sha256(&leaf_data).into();
+            leaves.push_back(leaf_hash);
+        }
+
+        // Build Merkle tree bottom-up
+        let mut level = leaves;
+        while level.len() > 1 {
+            let mut next_level: Vec<BytesN<32>> = Vec::new(env);
+            let mut i = 0;
+            while i < level.len() {
+                let left = level.get(i).unwrap();
+                let right = if i + 1 < level.len() {
+                    level.get(i + 1).unwrap()
+                } else {
+                    left.clone() // Duplicate last leaf if odd count
+                };
+                let combined = (left, right).to_xdr(env);
+                let parent: BytesN<32> = env.crypto().sha256(&combined).into();
+                next_level.push_back(parent);
+                i += 2;
+            }
+            level = next_level;
+        }
+        level.get(0).unwrap()
+    }
+
     fn batch_payout_internal(
         env: Env,
         caller: Option<Address>,
@@ -4555,6 +4604,16 @@ impl ProgramEscrowContract {
         amounts: soroban_sdk::Vec<i128>,
     ) -> ProgramData {
         Self::batch_payout(env, recipients, amounts)
+    }
+
+    /// Retrieve a stored batch payout receipt by its receipt ID.
+    ///
+    /// Returns `None` if no receipt exists for the given ID.
+    /// Receipts are stored in persistent storage and survive contract upgrades.
+    pub fn get_batch_receipt(env: Env, receipt_id: u64) -> Option<BatchReceipt> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::BatchReceipt(receipt_id))
     }
 
     // --- Payout Splits (Ratio-based) ---
