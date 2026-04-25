@@ -23,6 +23,8 @@ mod test_filter_pagination;
 mod test_frozen_balance;
 #[cfg(test)]
 mod test_reentrancy_guard;
+#[cfg(test)]
+mod test_admin_rotation;
 
 use crate::events::{
     emit_admin_rotation_accepted, emit_admin_rotation_cancelled, emit_admin_rotation_proposed,
@@ -909,6 +911,18 @@ pub enum DataKey {
     /// Upgrade-safe marker for participant list storage semantics.
     /// Increment when `WhitelistIndex` / `BlocklistIndex` layout changes.
     ParticipantListSchemaVersion,
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ADMIN ROTATION WITH TIMELOCK (Two-Step Rotation)
+    // ═══════════════════════════════════════════════════════════════════════
+    /// Pending admin address awaiting timelock expiry and acceptance.
+    PendingAdmin,
+    /// Timestamp after which the pending admin rotation can be executed.
+    AdminTimelock,
+    /// Configurable timelock duration for admin rotations (in seconds).
+    TimelockDuration,
+    /// Deprecated: Legacy admin transfer timestamp (kept for upgrade compatibility).
+    AdminTransferTimestamp,
 }
 
 #[contracttype]
@@ -946,6 +960,49 @@ pub struct PauseStateChanged {
     pub paused: bool,
     pub admin: Address,
     pub reason: Option<soroban_sdk::String>,
+    pub timestamp: u64,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADMIN ROTATION TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Status of a pending admin rotation.
+///
+/// This struct provides comprehensive information about an in-progress admin rotation,
+/// enabling frontends and indexers to display rotation progress and countdown timers.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminRotationStatus {
+    /// The current active admin (still has authority until rotation completes).
+    pub current_admin: Address,
+    /// The pending admin waiting to accept the rotation.
+    pub pending_admin: Address,
+    /// Unix timestamp after which the rotation can be executed.
+    pub execute_after: u64,
+    /// Whether the timelock has elapsed and the rotation is ready for acceptance.
+    pub is_executable: bool,
+    /// Seconds remaining until the timelock expires (0 if already executable).
+    pub remaining_seconds: u64,
+    /// Current ledger timestamp when this status was queried.
+    pub timestamp: u64,
+}
+
+/// Configuration parameters for admin rotation.
+///
+/// Provides the bounds and current state of the admin rotation timelock system.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminRotationConfig {
+    /// Current timelock duration in seconds for new admin rotations.
+    pub timelock_duration: u64,
+    /// Minimum allowed timelock duration (1 hour = 3,600 seconds).
+    pub min_timelock: u64,
+    /// Maximum allowed timelock duration (30 days = 2,592,000 seconds).
+    pub max_timelock: u64,
+    /// Whether there is currently a pending admin rotation in progress.
+    pub has_pending_rotation: bool,
+    /// Current ledger timestamp when this config was queried.
     pub timestamp: u64,
 }
 
@@ -2872,6 +2929,45 @@ impl BountyEscrowContract {
     /// Returns the acceptance timestamp for the current pending admin rotation.
     pub fn get_admin_rotation_timelock(env: Env) -> Option<u64> {
         env.storage().instance().get(&DataKey::AdminTimelock)
+    }
+
+    /// Returns comprehensive admin rotation state for indexing and UI display.
+    ///
+    /// # Returns
+    /// - `Some(AdminRotationStatus)` if a rotation is pending
+    /// - `None` if no rotation is in progress
+    pub fn get_admin_rotation_status(env: Env) -> Option<AdminRotationStatus> {
+        let pending_admin: Address = env.storage().instance().get(&DataKey::PendingAdmin)?;
+        let execute_after: u64 = env.storage().instance().get(&DataKey::AdminTimelock)?;
+        let current_admin: Address = env.storage().instance().get(&DataKey::Admin)?;
+        let now = env.ledger().timestamp();
+
+        Some(AdminRotationStatus {
+            current_admin,
+            pending_admin,
+            execute_after,
+            is_executable: now >= execute_after,
+            remaining_seconds: if now < execute_after {
+                execute_after.saturating_sub(now)
+            } else {
+                0
+            },
+            timestamp: now,
+        })
+    }
+
+    /// Returns the full admin rotation configuration.
+    pub fn get_admin_rotation_config(env: Env) -> AdminRotationConfig {
+        let duration = Self::get_rotation_timelock_duration(env.clone());
+        let has_pending = env.storage().instance().has(&DataKey::PendingAdmin);
+
+        AdminRotationConfig {
+            timelock_duration: duration,
+            min_timelock: MIN_ADMIN_ROTATION_TIMELOCK,
+            max_timelock: MAX_ADMIN_ROTATION_TIMELOCK,
+            has_pending_rotation: has_pending,
+            timestamp: env.ledger().timestamp(),
+        }
     }
 
     pub fn set_whitelist(env: Env, address: Address, whitelisted: bool) -> Result<(), Error> {
