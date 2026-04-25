@@ -435,7 +435,7 @@ enum DataKey {
     /// [FIX-C02] Pending admin restore awaiting new-admin confirmation
     PendingAdminRestore,
     /// Upgrade-safe schema version marker for liveness watchdog storage.
-    /// Written on init_admin; increment when LivenessStatus layout changes.
+    /// Written on init_admin; increment when WatchdogStatus layout changes.
     LivenessSchemaVersion,
     /// Timestamp of the last successful ping_watchdog call.
     WatchdogLastPing,
@@ -1039,6 +1039,8 @@ impl GrainlifyContract {
     pub fn create_config_snapshot(env: Env) -> u64 {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Admin not set");
         admin.require_auth();
+        // [GUARDRAIL] Snapshots are state mutations — blocked in read-only mode
+        Self::require_not_read_only(&env);
 
         let next_id: u64 = env.storage().instance()
             .get(&DataKey::SnapshotCounter).unwrap_or(0) + 1;
@@ -1146,6 +1148,8 @@ impl GrainlifyContract {
         let admin: Address = env.storage().instance()
             .get(&DataKey::Admin).expect("Admin not set");
         admin.require_auth();
+        // [GUARDRAIL] Restores mutate state — blocked in read-only mode
+        Self::require_not_read_only(&env);
 
         // [FIX-M02] Explicit error when snapshot is pruned
         let snapshot: CoreConfigSnapshot = env.storage().instance()
@@ -1199,6 +1203,9 @@ impl GrainlifyContract {
 
         // The proposed new admin must authorize this
         pending.proposed_admin.require_auth();
+
+        // [GUARDRAIL] Confirm is a state mutation — blocked in read-only mode
+        Self::require_not_read_only(&env);
 
         // Check expiry
         if env.ledger().timestamp() > pending.expires_at {
@@ -1454,6 +1461,16 @@ impl GrainlifyContract {
             (symbol_short!("watchdog"), symbol_short!("ping")),
             (admin, ts),
         );
+    }
+
+    /// Returns the liveness schema version written at `init_admin`.
+    /// Returns `0` on legacy deployments where the marker was never written.
+    /// Increment `LivenessSchemaVersion` in `init_admin` whenever `WatchdogStatus` layout changes.
+    pub fn get_liveness_schema_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LivenessSchemaVersion)
+            .unwrap_or(0)
     }
 
     // ========================================================================
